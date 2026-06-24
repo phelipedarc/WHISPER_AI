@@ -10,12 +10,28 @@ handling, samplers, plots and outputs are Whisper's own — built to be **simple
 > **Status:** early development. **Phase 1 — data ingestion + plotting — is done and tested
 > (44 unit tests).** The samplers (MCMC, Dynesty, …) come next.
 
-## Install (Docker)
+## Install
 
-Everything runs inside the `phe_sbi` container — nothing is installed on the host.
+Whisper is `pip`-installable straight from GitHub. **Phase 1 (data ingestion + plotting) needs no
+compiler and no redback** — it works in any container or venv:
 
 ```bash
-docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && pip install -e .'
+pip install git+https://github.com/phelipedarc/WHISPER_AI.git
+```
+
+For **model fitting** (Phase 2+), add the `models` extra to pull redback (needs a C compiler for sncosmo):
+
+```bash
+pip install "whisper-labia[models] @ git+https://github.com/phelipedarc/WHISPER_AI.git"
+```
+
+**Develop / contribute** (editable install + tests):
+
+```bash
+git clone https://github.com/phelipedarc/WHISPER_AI.git
+cd WHISPER_AI
+pip install -e ".[dev]"
+pytest -q
 ```
 
 ## 30-second quickstart

@@ -11,25 +11,39 @@ requires-python = ">=3.10"
 license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "Phelipe Darc", email = "phelipedarc@gmail.com" }]
 keywords = ["astronomy", "transients", "bayesian", "mcmc", "nested-sampling", "redback", "supernova", "kilonova", "tde"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Development Status :: 3 - Alpha",
+]
 
-# NOTE: redback is installed editable from the local clone (it carries custom edits),
-# NOT from PyPI. redback brings numpy/scipy/bilby/sncosmo/afterglowpy/etc.
+# Core deps cover data ingestion + plotting (Phase 1) and the Whisper-owned samplers; they are all
+# pure-Python / wheels (no compiler needed), with permissive bounds so installing Whisper never forces
+# a numpy/scipy downgrade. redback is an OPTIONAL extra (it provides the physical models + priors and
+# needs a C compiler for sncosmo); the strict numpy==1.26 / scipy<1.14 pins come from redback itself.
 dependencies = [
-    "numpy==1.26.0",
-    "scipy<1.14.0",
-    "pandas",
-    "matplotlib",
-    "emcee",
-    "dynesty",
-    "corner",
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "pandas>=1.5",
+    "matplotlib>=3.5",
+    "astropy>=5.0",
+    "emcee>=3.1",
+    "dynesty>=2.0",
+    "corner>=2.2",
     "tqdm",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
-# Milestone-2 samplers (kept out of the beta install):
-sbi = ["sbi", "torch"]
-abc = ["pyabc"]
+models = ["redback>=1.12"]    # physical transient models + priors (also pulls bilby, sncosmo, afterglowpy)
+dev = ["pytest", "pytest-cov", "build"]
+sbi = ["sbi", "torch"]        # Milestone 2
+abc = ["pyabc"]               # Milestone 2
+
+[project.urls]
+Homepage = "https://github.com/phelipedarc/WHISPER_AI"
+Repository = "https://github.com/phelipedarc/WHISPER_AI"
 
 [tool.setuptools.packages.find]
 where = ["."]
