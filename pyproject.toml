@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whisper-labia"
+version = "0.0.1.dev0"
+description = "Whisper: easy Bayesian model comparison of astronomical transient light curves, powered by redback models and priors."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Phelipe Darc", email = "phelipedarc@gmail.com" }]
+keywords = ["astronomy", "transients", "bayesian", "mcmc", "nested-sampling", "redback", "supernova", "kilonova", "tde"]
+
+# NOTE: redback is installed editable from the local clone (it carries custom edits),
+# NOT from PyPI. redback brings numpy/scipy/bilby/sncosmo/afterglowpy/etc.
+dependencies = [
+    "numpy==1.26.0",
+    "scipy<1.14.0",
+    "pandas",
+    "matplotlib",
+    "emcee",
+    "dynesty",
+    "corner",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+# Milestone-2 samplers (kept out of the beta install):
+sbi = ["sbi", "torch"]
+abc = ["pyabc"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["whisper_labia*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

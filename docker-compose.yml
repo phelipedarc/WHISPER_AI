@@ -1,0 +1,20 @@
+# Brings up the `whisper_dev` container with the whole WHISPER tree mounted at
+# /workspace, so both ./redback (the editable clone) and ./whisper-labia are visible,
+# along with the example CSVs. Editable installs and pytest run *inside* the container.
+#
+#   cd whisper-labia
+#   docker compose up -d
+#   docker compose exec whisper_dev pip install -e /workspace/redback
+#   docker compose exec whisper_dev pip install -e /workspace/whisper-labia
+#   docker compose exec whisper_dev python /workspace/whisper-labia/scripts/phase0_smoke.py
+services:
+  whisper_dev:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile
+    image: whisper-labia:dev
+    container_name: whisper_dev
+    working_dir: /workspace
+    volumes:
+      - ../:/workspace        # WHISPER root: redback clone + whisper-labia + example data
+    command: sleep infinity

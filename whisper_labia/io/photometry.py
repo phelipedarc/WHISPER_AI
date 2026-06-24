@@ -1,0 +1,42 @@
+"""Magnitude <-> flux-density conversions (AB system).
+
+Flux densities are in janskys (Jy); the AB zeropoint is 3631 Jy, i.e.
+``m_AB = -2.5 * log10(f_nu / 3631 Jy)``. redback's ``flux_density`` output is in mJy
+(1 Jy = 1e3 mJy); the Phase-2 forward model reconciles units. For Phase-1 ingestion we only
+need internally consistent, invertible conversions with correct error propagation.
+"""
+from __future__ import annotations
+
+import numpy as np
+
+AB_ZEROPOINT_JY = 3631.0
+_LN10 = np.log(10.0)
+POGSON = 2.5 / _LN10  # ~1.0857; magnitude error <-> SNR via sigma_m = POGSON / SNR
+
+
+def mag_to_flux_density(magnitude, magnitude_err=None, zeropoint_jy=AB_ZEROPOINT_JY):
+    """Convert AB magnitude to flux density (Jy). Returns ``flux`` or ``(flux, flux_err)``."""
+    magnitude = np.asarray(magnitude, dtype=float)
+    flux = zeropoint_jy * np.power(10.0, -0.4 * magnitude)
+    if magnitude_err is None:
+        return flux
+    magnitude_err = np.asarray(magnitude_err, dtype=float)
+    flux_err = 0.4 * _LN10 * flux * magnitude_err
+    return flux, flux_err
+
+
+def flux_density_to_mag(flux, flux_err=None, zeropoint_jy=AB_ZEROPOINT_JY):
+    """Convert flux density (Jy) to AB magnitude. Returns ``mag`` or ``(mag, mag_err)``."""
+    flux = np.asarray(flux, dtype=float)
+    magnitude = -2.5 * np.log10(flux / zeropoint_jy)
+    if flux_err is None:
+        return magnitude
+    flux_err = np.asarray(flux_err, dtype=float)
+    magnitude_err = (2.5 / _LN10) * (flux_err / flux)
+    return magnitude, magnitude_err
+
+
+def mag_err_to_snr(magnitude_err):
+    """Per-point SNR from an AB magnitude error: ``SNR = (2.5 / ln 10) / sigma_m`` (Pogson)."""
+    magnitude_err = np.asarray(magnitude_err, dtype=float)
+    return POGSON / magnitude_err
