@@ -16,6 +16,7 @@ from .samplers import (
     SamplerResult,
     fit,
     fit_ABC,
+    fit_ABC_SMC,
     list_samplers,
     register_sampler,
 )
@@ -29,5 +30,5 @@ __all__ = [
     "Model", "register_model", "get_model", "list_models",
     "chi2_distance",
     # samplers
-    "fit_ABC", "fit", "SamplerResult", "register_sampler", "list_samplers",
+    "fit_ABC", "fit_ABC_SMC", "fit", "SamplerResult", "register_sampler", "list_samplers",
 ]

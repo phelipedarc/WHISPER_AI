@@ -2,7 +2,9 @@ import numpy as np
 import pytest
 
 from whisper_labia import Prior, Uniform, get_model, list_models, register_model
+from whisper_labia.models.bazin import bazin_flux
 from whisper_labia.models.flare import flare_flux
+from whisper_labia.models.gaussian_rise import gaussian_rise_flux
 
 
 def test_flare_registered():
@@ -27,6 +29,21 @@ def test_register_custom_model():
     register_model("quad_test", quad, ["a"], prior=Prior({"a": Uniform(0, 1)}), overwrite=True)
     assert "quad_test" in list_models()
     assert np.allclose(get_model("quad_test")({"a": 2.0}, [1, 2, 3]), [2, 8, 18])
+
+
+def test_bazin_registered_and_finite():
+    assert "bazin" in list_models()
+    t = np.linspace(-5, 40, 60)
+    f = bazin_flux({"amplitude": 5.0, "t0": 2.0, "tau_rise": 3.0, "tau_fall": 15.0}, t)
+    assert f.shape == t.shape and np.all(np.isfinite(f)) and np.all(f >= 0) and f.max() > 0
+
+
+def test_gaussian_rise_registered_and_peak():
+    assert "gaussian_rise" in list_models()
+    t = np.array([0.0, 5.0, 10.0])     # t0=5 -> peak in the middle
+    f = gaussian_rise_flux({"amplitude": 3.0, "t0": 5.0, "sigma_rise": 2.0, "tau_decay": 10.0}, t)
+    assert np.isclose(f[1], 3.0)       # at t0, flux == amplitude
+    assert f[0] < f[1] and f[2] < f[1]  # rises to peak, then decays
 
 
 def test_unknown_model_raises():

@@ -4,7 +4,7 @@ Generated for **v0.0.1.dev0**. Covers **Phase 1 (data ingestion + plotting)** an
 layer** (pluggable models, priors, distance, samplers).
 
 - **Environment:** Docker container `phe_sbi`, Python 3.11.
-- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (62 tests).
+- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (70 tests).
 
 ## Package map
 
@@ -21,7 +21,7 @@ whisper_labia/
 
 Top-level (`import whisper_labia as wp`): `LightCurve`, `load_lightcurve`, `plot_light_curve`,
 `group_bands`, `FILTER_LOOKUP`, `Prior`, `Uniform`, `LogUniform`, `Model`, `register_model`,
-`get_model`, `list_models`, `chi2_distance`, `fit_ABC`, `fit`, `SamplerResult`, `register_sampler`,
+`get_model`, `list_models`, `chi2_distance`, `fit_ABC`, `fit_ABC_SMC`, `fit`, `SamplerResult`, `register_sampler`,
 `list_samplers`.
 
 ---
@@ -85,9 +85,14 @@ A model maps parameters to predicted flux: `predict(params: dict, times: np.ndar
 | `list_models` | `()` | Sorted registered model names. |
 | `Model` | dataclass: `name, predict, parameters, default_prior, description` | Callable: `model(params, times, bands)`. |
 
-Built-in **`flare`**: `flux = amplitude·(1 − exp(−t/rise_time))·exp(−t/decay_time)` (band-independent,
-vectorized; `t` = days since explosion). Default prior `amplitude~U(0,10)`, `rise_time~U(1,10)`,
-`decay_time~U(5,30)` — scale `amplitude` to your flux units for real data.
+Built-in models (band-independent, vectorized; `t` = days since explosion; scale `amplitude` to your
+flux units for real data):
+
+| Name | Form | Parameters |
+|---|---|---|
+| `flare` | `A·(1 − e^(−t/t_rise))·e^(−t/t_decay)` | amplitude, rise_time, decay_time |
+| `bazin` | `A·e^(−(t−t0)/τ_fall) / (1 + e^(−(t−t0)/τ_rise))` | amplitude, t0, tau_rise, tau_fall |
+| `gaussian_rise` | Gaussian rise to peak at `t0`, then exp decay | amplitude, t0, sigma_rise, tau_decay |
 
 > For **parallel** ABC (`n_jobs>1`) the `predict` function must be picklable (module-level, not a
 > closure/lambda). Closures work with `n_jobs=1`.
@@ -98,9 +103,9 @@ Any `f(obs_flux, obs_flux_err, sim_flux, bands) -> float` can be passed as a cus
 
 ### 6.4 Samplers  (`whisper_labia.samplers`)
 
-`fit_ABC(lc, model="flare", prior=None, **kwargs)` → `SamplerResult` (wraps `ABCSampler().fit`).
-`fit(lc, model, sampler="abc", **kwargs)` is the generic dispatcher. `list_samplers()`,
-`register_sampler(name, cls)` manage the registry.
+`fit_ABC(lc, model="flare", ...)` and `fit_ABC_SMC(lc, model="flare", ...)` → `SamplerResult`.
+`fit(lc, model, sampler="abc"|"abc_smc", **kwargs)` is the generic dispatcher. `list_samplers()` →
+`['abc', 'abc_smc']`; `register_sampler(name, cls)` adds your own.
 
 **`ABCSampler.fit(lc, model, prior=None, *, ...)`**:
 
@@ -112,6 +117,13 @@ Any `f(obs_flux, obs_flux_err, sim_flux, bands) -> float` can be passed as a cus
 | `distance` | `chi2_distance` | Distance function. |
 | `n_jobs` | `None` (→ min(cpu, 8)) | Processes for parallel simulation. |
 | `seed` | `0` | RNG seed (independent streams per worker via `SeedSequence`). |
+
+**`ABCSMCSampler.fit(lc, model, prior=None, *, n_particles=500, n_rounds=5, epsilon_schedule=None,
+quantile=0.5, perturbation_scale=0.1, distance=chi2_distance, n_jobs=None, seed=0)`** — sequential
+rejection: round 0 draws from the prior; later rounds resample + Gaussian-perturb accepted particles
+under a shrinking epsilon (explicit `epsilon_schedule`, or adaptive `quantile` of the previous round's
+distances). Perturbs only parameters and rejects proposals outside the prior; `info` carries per-round
+epsilon / acceptance / `total_simulations`.
 
 **`SamplerResult`** fields: `sampler`, `model`, `parameters`, `samples` (DataFrame of accepted draws
 + `distance`), `summary` (median/ci16/ci84/mean/std per param), `best_params`, `n_data`, `n_params`,
@@ -135,7 +147,7 @@ res.to_json("fit.json")
 `samplers.abc._simulate_batch/_worker`, `samplers.base.summarize_posterior`,
 `scripts/{phase0_smoke,demo_abc_at2017gfo}.py`.
 
-## 8. Test coverage (62 tests, all passing)
+## 8. Test coverage (70 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -145,9 +157,10 @@ res.to_json("fit.json")
 | `test_loader.py` | 12 | AT2017GFO load, window/subset, grouping, `min_snr`, `explosion_date`, upper limits. |
 | `test_plotting.py` | 5 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers. |
 | `test_priors.py` | 6 | Uniform/LogUniform/Prior sampling, log_prob, rescale, picklability. |
-| `test_models.py` | 4 | flare registration + vectorization, custom model, unknown-model error. |
+| `test_models.py` | 6 | flare/bazin/gaussian_rise vectorization, custom model, unknown-model error. |
 | `test_distance.py` | 2 | chi² zero/known value. |
 | `test_abc.py` | 6 | parameter recovery, serial+parallel, acceptance count, JSON, dispatch, custom model. |
+| `test_abc_smc.py` | 6 | SMC registration, recovery, epsilon tightening, explicit schedule, dispatch, model-agnostic. |
 
 Fixtures: `tests/data/at2017gfo.csv`, `tests/data/ztf18aarlhfw.csv`. Figures + ABC JSON in `docs/figures/`.
 

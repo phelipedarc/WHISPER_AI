@@ -160,7 +160,22 @@ res = wp.fit_ABC(lc, "expdecay", n_jobs=1)   # n_jobs=1 for closures; module-lev
 ```
 A custom distance is any `f(obs_flux, obs_flux_err, sim_flux, bands) -> float` passed as `distance=`.
 
+### ABC-SMC and more models
+
+There's also **ABC-SMC** (sequential rejection over rounds of shrinking threshold) and two more
+built-in models — **`bazin`** (SN rise+fall) and **`gaussian_rise`** (Gaussian rise + exp decay):
+
+```python
+wp.fit_ABC_SMC(r, "bazin", prior=prior, n_particles=1000, n_rounds=8, quantile=0.4, n_jobs=32)
+```
+
+A full **model-comparison report** (3 models × both samplers on AT2017GFO) is in
+[`REPORT_at2017gfo.md`](REPORT_at2017gfo.md) — there ABC-SMC matches flat ABC's fit with **~4× fewer
+simulations**.
+
+![model comparison](figures/at2017gfo_model_comparison.png)
+
 ## What's next
 
-Next: **another simple model and another sampler** (e.g. MCMC / Dynesty) on this same pluggable
-framework, then **redback** physical models via the optional `[models]` extra.
+Next: a **likelihood-based sampler** (MCMC / Dynesty) on this same pluggable framework, then
+**redback** physical models via the optional `[models]` extra.

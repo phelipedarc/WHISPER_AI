@@ -1,0 +1,129 @@
+{
+  "sampler": "abc_smc",
+  "model": "bazin",
+  "parameters": [
+    "amplitude",
+    "t0",
+    "tau_rise",
+    "tau_fall"
+  ],
+  "n_data": 88,
+  "n_params": 4,
+  "n_samples": 1000,
+  "runtime_s": 0.6573891416192055,
+  "min_distance": 5379.496601305336,
+  "max_log_likelihood": -2689.748300652668,
+  "aic": 5387.496601305336,
+  "bic": 5397.405948563249,
+  "best_params": {
+    "amplitude": 0.0018274849763995978,
+    "t0": -0.08360688727169469,
+    "tau_rise": 8.48549578541123,
+    "tau_fall": 1.3740077234487298
+  },
+  "summary": {
+    "amplitude": {
+      "median": 0.0021913036199711325,
+      "ci16": 0.001274098879212174,
+      "ci84": 0.003557934910520026,
+      "mean": 0.0023438030110558483,
+      "std": 0.0010493723642143076
+    },
+    "t0": {
+      "median": -0.969053022793176,
+      "ci16": -2.9822799519181498,
+      "ci84": 0.3508239264319913,
+      "mean": -1.2619149969501253,
+      "std": 1.5202084035978747
+    },
+    "tau_rise": {
+      "median": 4.344197114941554,
+      "ci16": 2.454905645494888,
+      "ci84": 7.278192086254649,
+      "mean": 4.697713769258253,
+      "std": 2.1816924935813575
+    },
+    "tau_fall": {
+      "median": 1.618007885239289,
+      "ci16": 1.1487606942637845,
+      "ci84": 1.9291272530169006,
+      "mean": 1.5683872003092423,
+      "std": 0.34691455953785794
+    }
+  },
+  "info": {
+    "n_particles": 1000,
+    "n_rounds": 8,
+    "rounds": [
+      {
+        "round": 1,
+        "epsilon": null,
+        "n_accepted": 1000,
+        "attempts": 6400,
+        "acceptance_rate": 0.15625,
+        "best_distance": 14254.523246600254
+      },
+      {
+        "round": 2,
+        "epsilon": 85445215.16721918,
+        "n_accepted": 1000,
+        "attempts": 6400,
+        "acceptance_rate": 0.15625,
+        "best_distance": 13402.519502132058
+      },
+      {
+        "round": 3,
+        "epsilon": 7265968.801323801,
+        "n_accepted": 1000,
+        "attempts": 6400,
+        "acceptance_rate": 0.15625,
+        "best_distance": 9286.382719869605
+      },
+      {
+        "round": 4,
+        "epsilon": 680126.738715418,
+        "n_accepted": 1000,
+        "attempts": 6400,
+        "acceptance_rate": 0.15625,
+        "best_distance": 5819.224306015608
+      },
+      {
+        "round": 5,
+        "epsilon": 131826.35681391074,
+        "n_accepted": 1000,
+        "attempts": 6400,
+        "acceptance_rate": 0.15625,
+        "best_distance": 5503.61740456666
+      },
+      {
+        "round": 6,
+        "epsilon": 75152.17636808162,
+        "n_accepted": 1000,
+        "attempts": 6400,
+        "acceptance_rate": 0.15625,
+        "best_distance": 5613.93011016075
+      },
+      {
+        "round": 7,
+        "epsilon": 38107.722113343676,
+        "n_accepted": 1000,
+        "attempts": 6400,
+        "acceptance_rate": 0.15625,
+        "best_distance": 5460.816714367213
+      },
+      {
+        "round": 8,
+        "epsilon": 19070.302097676897,
+        "n_accepted": 1000,
+        "attempts": 6400,
+        "acceptance_rate": 0.15625,
+        "best_distance": 5379.496601305336
+      }
+    ],
+    "total_simulations": 51200,
+    "perturbation_scale": 0.1,
+    "quantile": 0.4,
+    "n_jobs": 32,
+    "distance": "chi2_distance"
+  }
+}

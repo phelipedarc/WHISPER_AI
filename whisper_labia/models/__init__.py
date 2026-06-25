@@ -56,7 +56,11 @@ def list_models():
 
 
 # --- register built-in models ---
-from . import flare  # noqa: E402
+from . import bazin, flare, gaussian_rise  # noqa: E402
 
 register_model("flare", flare.flare_flux, flare.PARAMETERS,
                prior=flare.PRIOR, description=flare.DESCRIPTION)
+register_model("bazin", bazin.bazin_flux, bazin.PARAMETERS,
+               prior=bazin.PRIOR, description=bazin.DESCRIPTION)
+register_model("gaussian_rise", gaussian_rise.gaussian_rise_flux, gaussian_rise.PARAMETERS,
+               prior=gaussian_rise.PRIOR, description=gaussian_rise.DESCRIPTION)

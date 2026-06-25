@@ -54,9 +54,9 @@ wp.plot_light_curve(lc, layout="report")     # apparent-mag + flux overview, all
 - **Convert & derive** — magnitude ↔ flux, per-point **SNR**, set the **explosion date** (day 0).
 - **Plot** — a report (mag + flux) or a per-band grid (apparent / absolute mag, or flux), with clear
   marker conventions (detections = circles, SNR<3 = △, upper limits = ▽).
-- **Fit (ABC)** — Approximate Bayesian Computation (parallel rejection sampling) with the built-in
-  `flare` model or your own (`register_model`); posteriors + AIC/BIC + JSON out. Models and samplers
-  are both pluggable.
+- **Fit** — **ABC** and **ABC-SMC** (parallel) with built-in models `flare`, `bazin`,
+  `gaussian_rise` or your own (`register_model`); posteriors + AIC/BIC + JSON. See the
+  [AT2017GFO model-comparison report](docs/REPORT_at2017gfo.md). Models *and* samplers are pluggable.
 
 ## Learn more
 

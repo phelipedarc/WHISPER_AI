@@ -5,9 +5,10 @@ Add a new sampler by subclassing :class:`BaseSampler` and calling :func:`registe
 from __future__ import annotations
 
 from .abc import ABCSampler, fit_ABC
+from .abc_smc import ABCSMCSampler, fit_ABC_SMC
 from .base import BaseSampler, SamplerResult, summarize_posterior
 
-_SAMPLERS = {"abc": ABCSampler}
+_SAMPLERS = {"abc": ABCSampler, "abc_smc": ABCSMCSampler}
 
 
 def register_sampler(name, sampler_cls, *, overwrite=False):
@@ -27,12 +28,12 @@ def list_samplers():
 
 
 def fit(lc, model, sampler="abc", **kwargs):
-    """Generic dispatch: ``fit(lc, model, sampler='abc', ...)``."""
+    """Generic dispatch: ``fit(lc, model, sampler='abc'|'abc_smc', ...)``."""
     return get_sampler(sampler).fit(lc, model, **kwargs)
 
 
 __all__ = [
     "BaseSampler", "SamplerResult", "summarize_posterior",
-    "ABCSampler", "fit_ABC", "fit",
+    "ABCSampler", "fit_ABC", "ABCSMCSampler", "fit_ABC_SMC", "fit",
     "register_sampler", "get_sampler", "list_samplers",
 ]
