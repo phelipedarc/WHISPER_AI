@@ -61,7 +61,10 @@ wp.plot_light_curve(lc, layout="report")     # apparent-mag + flux overview, all
 ## Learn more
 
 - 📘 **[Tutorial](docs/TUTORIAL.md)** — a hands-on tour of every feature, with plots.
+- 📊 **[AT2017GFO report](docs/REPORT_at2017gfo.md)** — ABC vs ABC-SMC across three models.
+- 🧩 **[Extending Whisper](docs/EXTENDING.md)** — add your own model, sampler, or distance.
 - 📑 **[API reference](docs/API_REFERENCE.md)** — every function and its arguments.
+- 📝 **[Changelog](CHANGELOG.md)**.
 
 ## License
 
