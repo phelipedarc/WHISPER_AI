@@ -11,6 +11,12 @@ from .io import FILTER_LOOKUP, LightCurve, group_bands, load_lightcurve
 from .plotting import plot_light_curve
 from .priors import LogUniform, Prior, Uniform
 from .distance import chi2_distance
+from .likelihood import (
+    GaussianLikelihood,
+    GaussianLikelihoodWithUpperLimits,
+    MixtureGaussianLikelihood,
+    make_likelihood,
+)
 from .models import Model, get_model, list_models, register_model
 from .samplers import (
     SamplerResult,
@@ -29,6 +35,9 @@ __all__ = [
     "Prior", "Uniform", "LogUniform",
     "Model", "register_model", "get_model", "list_models",
     "chi2_distance",
+    # likelihoods
+    "GaussianLikelihood", "GaussianLikelihoodWithUpperLimits", "MixtureGaussianLikelihood",
+    "make_likelihood",
     # samplers
     "fit_ABC", "fit_ABC_SMC", "fit", "SamplerResult", "register_sampler", "list_samplers",
 ]

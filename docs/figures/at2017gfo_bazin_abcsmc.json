@@ -10,11 +10,11 @@
   "n_data": 88,
   "n_params": 4,
   "n_samples": 1000,
-  "runtime_s": 0.6573891416192055,
-  "min_distance": 5379.496601305336,
-  "max_log_likelihood": -2689.748300652668,
-  "aic": 5387.496601305336,
-  "bic": 5397.405948563249,
+  "runtime_s": 1.6700884737074375,
+  "min_distance": 5379.4966013053345,
+  "max_log_likelihood": -2689.7483006526672,
+  "aic": 5387.4966013053345,
+  "bic": 5397.405948563247,
   "best_params": {
     "amplitude": 0.0018274849763995978,
     "t0": -0.08360688727169469,
@@ -61,7 +61,7 @@
         "n_accepted": 1000,
         "attempts": 6400,
         "acceptance_rate": 0.15625,
-        "best_distance": 14254.523246600254
+        "best_distance": 14254.523246600249
       },
       {
         "round": 2,
@@ -69,7 +69,7 @@
         "n_accepted": 1000,
         "attempts": 6400,
         "acceptance_rate": 0.15625,
-        "best_distance": 13402.519502132058
+        "best_distance": 13402.519502132061
       },
       {
         "round": 3,
@@ -77,15 +77,15 @@
         "n_accepted": 1000,
         "attempts": 6400,
         "acceptance_rate": 0.15625,
-        "best_distance": 9286.382719869605
+        "best_distance": 9286.382719869604
       },
       {
         "round": 4,
-        "epsilon": 680126.738715418,
+        "epsilon": 680126.7387154179,
         "n_accepted": 1000,
         "attempts": 6400,
         "acceptance_rate": 0.15625,
-        "best_distance": 5819.224306015608
+        "best_distance": 5819.224306015609
       },
       {
         "round": 5,
@@ -93,7 +93,7 @@
         "n_accepted": 1000,
         "attempts": 6400,
         "acceptance_rate": 0.15625,
-        "best_distance": 5503.61740456666
+        "best_distance": 5503.617404566659
       },
       {
         "round": 6,
@@ -101,7 +101,7 @@
         "n_accepted": 1000,
         "attempts": 6400,
         "acceptance_rate": 0.15625,
-        "best_distance": 5613.93011016075
+        "best_distance": 5613.930110160749
       },
       {
         "round": 7,
@@ -117,7 +117,7 @@
         "n_accepted": 1000,
         "attempts": 6400,
         "acceptance_rate": 0.15625,
-        "best_distance": 5379.496601305336
+        "best_distance": 5379.4966013053345
       }
     ],
     "total_simulations": 51200,

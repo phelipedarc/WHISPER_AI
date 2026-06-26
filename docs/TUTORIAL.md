@@ -175,7 +175,22 @@ simulations**.
 
 ![model comparison](figures/at2017gfo_model_comparison.png)
 
+### Likelihoods & space (flux vs magnitude)
+
+All inference can run in **flux** or **apparent-magnitude** space, with Gaussian, upper-limit, and
+mixture (outlier-robust) likelihoods (`whisper_labia.likelihood`). The default is chosen by data type;
+override for edge cases (non-detections, outliers):
+
+```python
+from whisper_labia.likelihood import make_likelihood, GaussianLikelihoodWithUpperLimits
+lik = make_likelihood(lc, space="magnitude")                 # default by data type; override space/kind
+lik = GaussianLikelihoodWithUpperLimits(lc, space="flux")    # use non-detections in flux space
+```
+
+(Implemented and tested; wiring them into the samplers — `fit_ABC(..., space=..., likelihood=...)` —
+is the next step.)
+
 ## What's next
 
-Next: a **likelihood-based sampler** (MCMC / Dynesty) on this same pluggable framework, then
-**redback** physical models via the optional `[models]` extra.
+Next: wire likelihoods into the samplers (flux/magnitude space + upper limits in inference), then a
+**likelihood-based sampler** (MCMC / Dynesty), then **redback** physical models via the `[models]` extra.

@@ -31,8 +31,10 @@ class SamplerResult:
     """Unified result for every Whisper sampler.
 
     ``samples`` holds the accepted/posterior draws. Model-selection metrics (``aic``, ``bic``,
-    ``max_log_likelihood``) come from the best fit; for ABC with a chi-square distance these use the
-    Gaussian relation ``chi2 = -2 ln L``. ``info`` carries sampler-specific diagnostics.
+    ``max_log_likelihood``) come from the best fit. With a chi-square distance these use
+    ``chi2 = -2 ln L`` **up to an additive constant** (the Gaussian normalization is dropped, so
+    absolute values are offset, but model comparison on the same data is unaffected); a proper
+    ``whisper_labia.likelihood`` gives exact values. ``info`` carries sampler-specific diagnostics.
     """
 
     sampler: str

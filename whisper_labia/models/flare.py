@@ -23,9 +23,14 @@ PRIOR = Prior({
 
 
 def flare_flux(parameters, times, bands=None):
-    """Predicted flux at ``times`` (bands ignored -- this toy model is band-independent)."""
+    """Predicted flux at ``times`` (bands ignored -- this toy model is band-independent).
+
+    Flux is **zero for t <= 0** (no emission before the explosion) and non-negative everywhere.
+    """
     amplitude = parameters["amplitude"]
     rise_time = parameters["rise_time"]
     decay_time = parameters["decay_time"]
     t = np.asarray(times, dtype=float)
-    return amplitude * (1.0 - np.exp(-t / rise_time)) * np.exp(-t / decay_time)
+    flux = (amplitude * (1.0 - np.exp(np.clip(-t / rise_time, -50.0, 50.0)))
+            * np.exp(np.clip(-t / decay_time, -50.0, 50.0)))
+    return np.where(t > 0.0, flux, 0.0)

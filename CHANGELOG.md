@@ -21,6 +21,13 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 - Samplers: registry (`register_sampler` / `list_samplers`) + **`ABCSampler`** (parallel rejection)
   and **`ABCSMCSampler`** (sequential, adaptive or explicit epsilon). `SamplerResult` with posterior
   summary, best-fit, AIC / BIC / max-log-likelihood (χ² ≙ −2 ln L), and `to_json`.
+- Likelihoods (`likelihood.py`): `GaussianLikelihood`, `GaussianLikelihoodWithUpperLimits`,
+  `MixtureGaussianLikelihood`, `make_likelihood` — **flux or apparent-magnitude space**, default by
+  data type, upper limits in flux/mag. _Standalone + tested; sampler integration pending._
+
+### Fixed
+- `flare` returns 0 before the explosion (was negative for `t<0`); `bazin` is evaluated in log-space
+  (numerically stable — no early-time plateau for `tau_rise < tau_fall`).
 
 ### Packaging & docs
 - pip-installable from GitHub; relaxed dependency pins (no forced numpy/scipy downgrade); redback is an

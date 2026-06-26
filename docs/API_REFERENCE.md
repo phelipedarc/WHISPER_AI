@@ -4,7 +4,7 @@ Generated for **v0.0.1.dev0**. Covers **Phase 1 (data ingestion + plotting)** an
 layer** (pluggable models, priors, distance, samplers).
 
 - **Environment:** Docker container `phe_sbi`, Python 3.11.
-- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (70 tests).
+- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (81 tests).
 
 ## Package map
 
@@ -14,15 +14,17 @@ whisper_labia/
   plotting.py          # plot_light_curve
   priors.py            # Uniform, LogUniform, Prior
   distance.py          # chi2_distance
-  models/              # Model, register_model/get_model/list_models + built-in `flare`
-  samplers/            # BaseSampler, SamplerResult, ABCSampler, fit_ABC, fit, register/list_samplers
+  likelihood.py        # GaussianLikelihood, ...WithUpperLimits, Mixture..., make_likelihood
+  models/              # Model + register/get/list + built-ins flare/bazin/gaussian_rise
+  samplers/            # BaseSampler, SamplerResult, ABCSampler, ABCSMCSampler, fit_ABC(_SMC), fit
   io/                  # LightCurve, load_lightcurve, bands, photometry
 ```
 
 Top-level (`import whisper_labia as wp`): `LightCurve`, `load_lightcurve`, `plot_light_curve`,
 `group_bands`, `FILTER_LOOKUP`, `Prior`, `Uniform`, `LogUniform`, `Model`, `register_model`,
-`get_model`, `list_models`, `chi2_distance`, `fit_ABC`, `fit_ABC_SMC`, `fit`, `SamplerResult`, `register_sampler`,
-`list_samplers`.
+`get_model`, `list_models`, `chi2_distance`, `GaussianLikelihood`, `GaussianLikelihoodWithUpperLimits`,
+`MixtureGaussianLikelihood`, `make_likelihood`, `fit_ABC`, `fit_ABC_SMC`, `fit`, `SamplerResult`,
+`register_sampler`, `list_samplers`.
 
 ---
 
@@ -142,12 +144,42 @@ res.to_json("fit.json")
 
 ---
 
+### 6.5 Likelihoods  (`whisper_labia.likelihood`)
+
+Models predict **flux**; a likelihood compares it to the data in a chosen **space** —
+`space='flux'` (residuals/errors in Jy; upper limits usable), `space='magnitude'` (model flux → AB
+mag vs observed mag/err), or `space='auto'` (magnitude data → magnitude space, flux data → flux space;
+the correct default). Each exposes `log_likelihood(model_flux) -> float` and is picklable.
+
+| Class / function | Purpose |
+|---|---|
+| `GaussianLikelihood(lc, space="auto")` | Independent Gaussian in the chosen space. |
+| `GaussianLikelihoodWithUpperLimits(lc, space="auto", upper_limit_sigma=3.0)` | Gaussian for detections + a CDF (flux: P(true<limit)) / survival (mag: P(true>limit)) term for upper limits. |
+| `MixtureGaussianLikelihood(lc, space="auto", alpha=0.9, sigma_out_scale=10.0)` | Outlier-robust two-component mixture (α, σ_out fixed). |
+| `make_likelihood(lc, kind="auto", space="auto", **kw)` | Build the data-appropriate likelihood (auto-selects upper-limits when present). |
+
+> Status: implemented + tested but **not yet wired into the samplers** (ABC/ABC-SMC currently score
+> with `chi2_distance`). Adding `likelihood=` / `space=` to the samplers is the next step.
+
+## Notes & limitations (review findings)
+
+- **Metrics vs likelihood:** ABC/ABC-SMC score with the χ² distance, so `AIC`/`BIC`/
+  `max_log_likelihood` are χ²-based — exact for **model comparison on the same data**, but offset by
+  the Gaussian normalization constant in absolute terms. The likelihood layer makes them exact.
+- **ABC-SMC is unweighted** (uniform parent resampling, no importance weights): best-fit + an
+  approximate posterior are reliable; rigorous posterior weights are a planned option.
+- **ABC posteriors are approximate** (broadened by the acceptance ε); tighten ε / use SMC for sharper ones.
+- **Toy models** are band-independent analytic forms: `flare` = 0 before explosion; `bazin` computed
+  stably in log-space; `gaussian_rise` has a derivative kink at the peak. Physical, band-dependent
+  models come from redback (optional `[models]` extra).
+- **SNR(magnitude)** uses `(2.5/ln10)/σ_m`, valid for small magnitude errors.
+
 ## 7. Internals
 `io.loader._resolve_columns`, `schema.LightCurve._subset/_copy`, `plotting._categories/_scatter`,
 `samplers.abc._simulate_batch/_worker`, `samplers.base.summarize_posterior`,
 `scripts/{phase0_smoke,demo_abc_at2017gfo}.py`.
 
-## 8. Test coverage (70 tests, all passing)
+## 8. Test coverage (81 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -157,10 +189,11 @@ res.to_json("fit.json")
 | `test_loader.py` | 12 | AT2017GFO load, window/subset, grouping, `min_snr`, `explosion_date`, upper limits. |
 | `test_plotting.py` | 5 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers. |
 | `test_priors.py` | 6 | Uniform/LogUniform/Prior sampling, log_prob, rescale, picklability. |
-| `test_models.py` | 6 | flare/bazin/gaussian_rise vectorization, custom model, unknown-model error. |
+| `test_models.py` | 8 | flare/bazin/gaussian_rise (incl. flare pre-explosion=0, bazin tail→0), custom model, errors. |
 | `test_distance.py` | 2 | chi² zero/known value. |
 | `test_abc.py` | 6 | parameter recovery, serial+parallel, acceptance count, JSON, dispatch, custom model. |
 | `test_abc_smc.py` | 6 | SMC registration, recovery, epsilon tightening, explicit schedule, dispatch, model-agnostic. |
+| `test_likelihood.py` | 9 | Gaussian flux/mag, space-auto, upper-limit CDF, mixture, make_likelihood, picklable. |
 
 Fixtures: `tests/data/at2017gfo.csv`, `tests/data/ztf18aarlhfw.csv`. Figures + ABC JSON in `docs/figures/`.
 

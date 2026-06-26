@@ -8,12 +8,12 @@ Models: `flare`, `bazin` (SN rise+fall), `gaussian_rise` (Gaussian rise + exp de
 
 | Model | Sampler | k | chi2/dof | AIC | BIC | runtime (s) | simulations |
 |---|---|---|---|---|---|---|---|
-| gaussian_rise | ABC | 4 | 62.7 | 5277 | 5287 | 0.78 | 200,000 |
-| gaussian_rise | ABC-SMC | 4 | 63.1 | 5310 | 5320 | 0.95 | 51,200 |
-| bazin | ABC-SMC | 4 | 64.0 | 5387 | 5397 | 0.66 | 51,200 |
-| bazin | ABC | 4 | 64.1 | 5390 | 5400 | 0.82 | 200,000 |
-| flare | ABC | 3 | 66.8 | 5682 | 5690 | 1.38 | 200,000 |
-| flare | ABC-SMC | 3 | 85.5 | 7275 | 7282 | 1.20 | 51,200 |
+| gaussian_rise | ABC | 4 | 62.7 | 5277 | 5287 | 1.68 | 200,000 |
+| gaussian_rise | ABC-SMC | 4 | 63.1 | 5310 | 5320 | 1.70 | 51,200 |
+| bazin | ABC-SMC | 4 | 64.0 | 5387 | 5397 | 1.67 | 51,200 |
+| bazin | ABC | 4 | 64.1 | 5390 | 5400 | 2.06 | 200,000 |
+| flare | ABC | 3 | 66.8 | 5682 | 5690 | 1.35 | 200,000 |
+| flare | ABC-SMC | 3 | 85.5 | 7275 | 7282 | 1.48 | 51,200 |
 
 **Best (lowest AIC): `gaussian_rise` via ABC** (AIC=5277, chi2/dof=62.7).
 

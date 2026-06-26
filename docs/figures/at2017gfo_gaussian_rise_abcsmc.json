@@ -10,7 +10,7 @@
   "n_data": 88,
   "n_params": 4,
   "n_samples": 1000,
-  "runtime_s": 0.9472481459379196,
+  "runtime_s": 1.6955728307366371,
   "min_distance": 5301.99255115775,
   "max_log_likelihood": -2650.996275578875,
   "aic": 5309.99255115775,

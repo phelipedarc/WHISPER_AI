@@ -49,3 +49,16 @@ def test_gaussian_rise_registered_and_peak():
 def test_unknown_model_raises():
     with pytest.raises(KeyError):
         get_model("does_not_exist")
+
+
+def test_flare_zero_before_explosion():
+    f = flare_flux({"amplitude": 5.0, "rise_time": 3.0, "decay_time": 15.0},
+                   np.array([-2.0, -0.5, 0.0, 1.0]))
+    assert f[0] == 0.0 and f[1] == 0.0 and f[2] == 0.0 and f[3] > 0   # no pre-explosion emission
+
+
+def test_bazin_vanishes_far_before_peak():
+    # tau_rise < tau_fall must decay toward 0 far before the peak (not plateau at amplitude).
+    f = bazin_flux({"amplitude": 5.0, "t0": 0.0, "tau_rise": 1.0, "tau_fall": 20.0},
+                   np.array([0.0, -1000.0]))
+    assert f[0] > 0 and f[1] < 1e-3

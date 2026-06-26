@@ -6,7 +6,8 @@ Rises as a Gaussian up to the peak at ``t0`` then decays exponentially -- contin
     flux(t) = A * exp(-(t - t0)^2 / (2 sigma_rise^2))   for t <  t0
     flux(t) = A * exp(-(t - t0) / tau_decay)            for t >= t0
 
-Band-independent and vectorized. ``t`` is days since explosion.
+Band-independent and vectorized. ``t`` is days since explosion. (Continuous at the peak, with a
+derivative kink there -- a feature of this simple model.)
 """
 from __future__ import annotations
 

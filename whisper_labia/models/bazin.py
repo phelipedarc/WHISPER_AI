@@ -2,8 +2,9 @@
 
 ``flux(t) = A * exp(-(t - t0) / tau_fall) / (1 + exp(-(t - t0) / tau_rise))``
 
-Band-independent and vectorized. Exponent arguments are clipped to keep extreme prior draws finite
-(so ABC always gets a usable distance). ``t`` is days since explosion.
+Band-independent and vectorized; computed in log-space for numerical stability, so extreme prior
+draws stay finite and (for ``tau_rise < tau_fall``) the flux correctly decays toward 0 far before
+the peak. ``t`` is days since explosion.
 """
 from __future__ import annotations
 
@@ -23,11 +24,11 @@ PRIOR = Prior({
 
 
 def bazin_flux(parameters, times, bands=None):
+    """A * exp(-dt/tau_fall) / (1 + exp(-dt/tau_rise)) with dt = t - t0, evaluated stably in log-space."""
     amplitude = parameters["amplitude"]
     t0 = parameters["t0"]
     tau_rise = parameters["tau_rise"]
     tau_fall = parameters["tau_fall"]
     dt = np.asarray(times, dtype=float) - t0
-    fall = np.exp(np.clip(-dt / tau_fall, -50.0, 50.0))
-    rise = np.exp(np.clip(-dt / tau_rise, -50.0, 50.0))
-    return amplitude * fall / (1.0 + rise)
+    log_flux = -dt / tau_fall - np.logaddexp(0.0, -dt / tau_rise)
+    return amplitude * np.exp(np.clip(log_flux, -700.0, 700.0))

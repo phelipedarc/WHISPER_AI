@@ -13,6 +13,10 @@ prior's support are rejected, and epsilon can be adaptive.
 Epsilon schedule: pass an explicit ``epsilon_schedule`` list, or leave it ``None`` for an **adaptive**
 schedule where the next round's epsilon = the ``quantile`` (default 0.5) of the current round's
 accepted distances.
+
+Note: this is the **unweighted** SMC variant (parents are resampled uniformly; no importance
+weights). The best fit and an approximate posterior are reliable; for a rigorously weighted posterior,
+importance-weighted ABC-SMC is a planned option.
 """
 from __future__ import annotations
 
