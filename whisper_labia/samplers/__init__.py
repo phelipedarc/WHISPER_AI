@@ -29,8 +29,8 @@ def list_samplers():
     return sorted(_SAMPLERS)
 
 
-def fit(lc, model, sampler="abc", **kwargs):
-    """Generic dispatch: ``fit(lc, model, sampler='abc'|'abc_smc', ...)``."""
+def fit(lc, model, sampler="abc", **kwargs) -> SamplerResult:
+    """Generic dispatch: ``fit(lc, model, sampler='abc'|'abc_smc'|'snpe', ...)``."""
     return get_sampler(sampler).fit(lc, model, **kwargs)
 
 

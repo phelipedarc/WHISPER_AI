@@ -33,19 +33,21 @@ def test_data_mode_survives_subset():
     assert lc.select_bands("r").data_mode == "flux_density"
 
 
-# --------------------------------------------------------------------------- __call__ dataframe
-def test_call_returns_enriched_dataframe():
+# --------------------------------------------------------------------------- lc() is the table
+def test_call_returns_self_table():
+    """lc() returns the LightCurve itself (an astropy Table) -- assign/compute columns directly."""
     lc = LightCurve(time=[1.0, 2.0], band=["r", "g"], magnitude=[20.0, 21.0],
                     magnitude_err=[0.1, 0.1])
-    df = lc()
-    assert "flux" in df.columns and "magnitude" in df.columns
-    assert np.all(np.isfinite(df["flux"]))        # flux derived from per-band zero point
+    assert lc() is lc
+    lc()["shifted"] = lc()["magnitude"] + 5          # griffin-style column assignment
+    assert list(lc["shifted"]) == [25.0, 26.0]
+    assert "shifted" in lc.colnames
 
 
-def test_call_flux_only_fills_magnitude():
+def test_add_mag_fills_magnitude_column():
     lc = LightCurve(time=[1.0], band=["r"], flux=[1e-3], flux_err=[1e-4])
-    df = lc()
-    assert "magnitude" in df.columns and np.isfinite(df["magnitude"].iloc[0])
+    out = lc.add_mag()
+    assert "magnitude" in out.colnames and np.isfinite(out["magnitude"][0])
 
 
 # --------------------------------------------------------------------------- redshift
@@ -168,8 +170,8 @@ def test_subset_preserves_redshift_state_without_rewarning():
     assert not lc.redshift_known and lc.redshift_prior is not None
     with warnings.catch_warnings():
         warnings.simplefilter("error")            # any warning fails the test
-        sub = lc.select_bands("r")
-        cp = lc._copy()
+        sub = lc.select_bands("r")                # boolean-mask slicing (Table)
+        cp = lc.copy()
     assert not sub.redshift_known and sub.redshift_prior == lc.redshift_prior
     assert not cp.redshift_known
     lz = LightCurve(time=[1.0, 2.0], band=["r", "g"], flux=[1.0, 2.0], flux_err=[0.1, 0.1],
@@ -178,12 +180,13 @@ def test_subset_preserves_redshift_state_without_rewarning():
     assert s.redshift == 0.0 and s.luminosity_distance == 40.0
 
 
-def test_add_flux_uses_constant_ab_zeropoint_but_dataframe_uses_per_band():
-    """add_flux() stays on AB 3631 (modelling); the enriched dataframe uses the per-band zero point."""
+def test_add_flux_uses_constant_ab_zeropoint_with_per_band_opt_in():
+    """add_flux() stays on AB 3631 (modelling); pass the per-band zero point explicitly to opt in."""
     lc = LightCurve(time=[1.0], band=["myJ"], magnitude=[20.0], magnitude_err=[0.1],
                     zero_point=[1594.0], lambda_eff=[12350.0])
-    assert np.isclose(lc.add_flux().flux[0], 3631.0 * 10 ** (-0.4 * 20.0))   # AB constant
-    assert np.isclose(lc()["flux"].iloc[0], 1594.0 * 10 ** (-0.4 * 20.0))    # per-band zero point
+    assert np.isclose(lc.add_flux()["flux"][0], 3631.0 * 10 ** (-0.4 * 20.0))               # AB constant
+    assert np.isclose(lc.add_flux(zeropoint_jy=lc.zero_point)["flux"][0],
+                      1594.0 * 10 ** (-0.4 * 20.0))                                          # per-band
 
 
 def test_add_flux_mag_reject_band_integrated_flux():

@@ -94,11 +94,18 @@ def _to_torch_prior(prior, sb):
 
 
 def _build_simulator(predict, names, times, bands, model_in_space, sigma, torch, seed):
-    """A batched sbi simulator: parameter vector(s) -> noisy light curve in the data space."""
+    """A batched sbi simulator: parameter vector(s) -> noisy light curve in the data space.
+
+    The observational noise for each parameter row is seeded from ``(seed, that row's values)``, so it
+    is **reproducible** and **independent of how sbi chunks the batch across workers** — sharing a
+    single RNG would make all ``num_workers>1`` processes add identical noise.
+    """
+    import zlib
+
     n_obs = len(times)
     sig = np.asarray(sigma, dtype=float)
     sig = np.where(np.isfinite(sig) & (sig > 0), sig, 1.0)   # guard degenerate/zero errors
-    noise_rng = np.random.default_rng(seed)
+    base_seed = int(seed)
 
     def simulator(theta):
         th = np.asarray(theta.detach().cpu().numpy(), dtype=float)
@@ -109,9 +116,9 @@ def _build_simulator(predict, names, times, bands, model_in_space, sigma, torch,
         for i in range(th.shape[0]):
             params = {nm: float(th[i, j]) for j, nm in enumerate(names)}
             model_flux = np.asarray(predict(params, times, bands), dtype=float)
-            out[i] = model_in_space(model_flux)
-        out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)   # keep training finite
-        out = out + noise_rng.normal(0.0, sig, size=out.shape)
+            mf = np.nan_to_num(model_in_space(model_flux), nan=0.0, posinf=0.0, neginf=0.0)
+            row_seed = (base_seed + zlib.crc32(th[i].astype(np.float64).tobytes())) & 0xFFFFFFFF
+            out[i] = mf + np.random.default_rng(row_seed).normal(0.0, sig)
         res = torch.as_tensor(out, dtype=torch.float32)
         return res[0] if single else res
 
@@ -227,9 +234,9 @@ class SNPESampler(BaseSampler):
                     theta, x, proposal=proposal, exclude_invalid_x=True).train(
                     show_train_summary=False, **train_kwargs)
             posterior = inference.build_posterior(de_net)
+            posterior.set_default_x(x_o)                      # so result.posterior.sample() needs no x
             posteriors.append(posterior)
             if r < int(num_rounds) - 1:                      # update proposal for the next round
-                posterior.set_default_x(x_o)
                 if restricted:
                     # num_samples_to_estimate_support defaults to 1e6 in sbi (hours of sampling);
                     # cap it to keep truncated SNPE practical.
@@ -280,7 +287,7 @@ class SNPESampler(BaseSampler):
         return result
 
 
-def fit_SNPE(lc, model="flare", prior=None, **kwargs):
+def fit_SNPE(lc, model="flare", prior=None, **kwargs) -> SamplerResult:
     """Fit ``lc`` with ``model`` via Sequential Neural Posterior Estimation.
 
     See :meth:`SNPESampler.fit` for options. Requires the optional ``[sbi]`` extra (sbi + torch).

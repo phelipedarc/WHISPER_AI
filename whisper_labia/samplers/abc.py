@@ -14,19 +14,25 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import pandas as pd
 
-from ..distance import chi2_distance
+from ..distance import chi2_distance, get_distance
 from ..models import get_model
 from .base import BaseSampler, SamplerResult, summarize_posterior
 
 
-def _simulate_batch(predict, prior, distance, times, bands, obs_flux, obs_err, n_sims, seed):
-    rng = np.random.default_rng(seed)
+def _simulate_batch(predict, prior, distance, times, bands, obs_flux, obs_err, indices, seed):
+    """Simulate the given **global** simulation indices.
+
+    Each index ``i`` draws from its own RNG stream ``default_rng([seed, i])``, so the set of draws is
+    identical no matter how the indices are chunked across workers. This makes the result fully
+    reproducible for a fixed ``seed`` **regardless of ``n_jobs``** (the machine's core count).
+    """
     thetas = []
-    distances = np.empty(n_sims, dtype=float)
-    for i in range(n_sims):
+    distances = np.empty(len(indices), dtype=float)
+    for j, idx in enumerate(indices):
+        rng = np.random.default_rng([int(seed), int(idx)])
         theta = prior.sample(rng)
         sim = np.asarray(predict(theta, times, bands), dtype=float)
-        distances[i] = distance(obs_flux, obs_err, sim, bands)
+        distances[j] = distance(obs_flux, obs_err, sim, bands)
         thetas.append(theta)
     return thetas, distances
 
@@ -36,11 +42,44 @@ def _worker(args):
 
 
 class ABCSampler(BaseSampler):
+    """Approximate Bayesian Computation by parallel rejection (see the module docstring)."""
+
     name = "abc"
 
     def fit(self, lc, model, prior=None, *, n_simulations=10000, quantile=0.01, threshold=None,
             distance=chi2_distance, n_jobs=None, seed=0):
+        """Fit ``lc`` with ``model`` by rejection ABC, returning a :class:`SamplerResult`.
+
+        Parameters
+        ----------
+        lc : LightCurve
+            Observed light curve; must carry flux errors (``flux_err``) for the chi-square distance.
+        model : str or Model
+            A registered model name or a :class:`~whisper_labia.models.Model`.
+        prior : Prior, optional
+            Parameter prior; defaults to the model's ``default_prior`` (``ValueError`` if neither).
+        n_simulations : int, default 10000
+            Number of prior draws / simulations.
+        quantile : float, default 0.01
+            Acceptance fraction — keep the closest ``quantile`` of draws (robust default).
+        threshold : float, optional
+            Fixed acceptance distance epsilon; overrides ``quantile`` when given.
+        distance : callable, default :func:`chi2_distance`
+            ``f(obs_flux, obs_err, sim_flux, bands) -> float``. Must be picklable for ``n_jobs > 1``.
+        n_jobs : int, optional
+            Worker processes (default ``min(os.cpu_count(), 8)``). **The result is independent of
+            ``n_jobs``** for a fixed ``seed`` — parallelism affects speed only, not the science.
+        seed : int, default 0
+            Base RNG seed; the full posterior is reproducible given ``(seed, n_simulations)``.
+
+        Returns
+        -------
+        SamplerResult
+            Posterior samples + summary, ``best_params``, and ``max_log_likelihood``/``aic``/``bic``
+            (chi-square = -2 ln L for a Gaussian likelihood).
+        """
         model = get_model(model)
+        distance = get_distance(distance)
         prior = prior if prior is not None else model.default_prior
         if prior is None:
             raise ValueError(f"No prior available for model {model.name!r}; pass prior=...")
@@ -56,21 +95,21 @@ class ABCSampler(BaseSampler):
 
         n_jobs = n_jobs or min(os.cpu_count() or 1, 8)
         n_jobs = max(1, min(int(n_jobs), n_simulations))
-        base, rem = divmod(n_simulations, n_jobs)
-        chunks = [base + (1 if k < rem else 0) for k in range(n_jobs)]
-        seeds = np.random.SeedSequence(seed).spawn(n_jobs)
+        # Split the GLOBAL simulation indices into contiguous chunks; each index keeps its own RNG
+        # stream, so the union of draws (and their order) is identical for any n_jobs.
+        index_chunks = [c for c in np.array_split(np.arange(n_simulations), n_jobs) if len(c)]
 
         t0 = time.perf_counter()
         thetas = []
         dist_parts = []
         if n_jobs == 1:
             th, ds = _simulate_batch(predict, prior, distance, times, bands,
-                                     obs_flux, obs_err, chunks[0], seeds[0])
+                                     obs_flux, obs_err, index_chunks[0], seed)
             thetas.extend(th)
             dist_parts.append(ds)
         else:
-            args = [(predict, prior, distance, times, bands, obs_flux, obs_err, chunks[k], seeds[k])
-                    for k in range(n_jobs) if chunks[k] > 0]
+            args = [(predict, prior, distance, times, bands, obs_flux, obs_err, idx, seed)
+                    for idx in index_chunks]
             with ProcessPoolExecutor(max_workers=n_jobs) as executor:
                 for th, ds in executor.map(_worker, args):
                     thetas.extend(th)
@@ -106,6 +145,6 @@ class ABCSampler(BaseSampler):
         )
 
 
-def fit_ABC(lc, model="flare", prior=None, **kwargs):
+def fit_ABC(lc, model="flare", prior=None, **kwargs) -> SamplerResult:
     """Fit ``lc`` with ``model`` via rejection ABC. See :meth:`ABCSampler.fit` for options."""
     return ABCSampler().fit(lc, model, prior=prior, **kwargs)

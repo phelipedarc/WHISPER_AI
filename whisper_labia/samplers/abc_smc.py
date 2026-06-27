@@ -28,24 +28,32 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import pandas as pd
 
-from ..distance import chi2_distance
+from ..distance import chi2_distance, get_distance
 from ..models import get_model
 from .base import BaseSampler, SamplerResult, summarize_posterior
 
 
+#: Floor added to the Gaussian perturbation scale so a zero-valued parameter still moves.
+_PERTURB_FLOOR = 1e-6
+
+
 def _perturb(particle, scale, rng):
-    """Gaussian kernel: each parameter += N(0, scale*|value| + 1e-6)."""
-    return {k: v + rng.normal(0.0, scale * abs(v) + 1e-6) for k, v in particle.items()}
+    """Gaussian kernel: each parameter += N(0, scale*|value| + _PERTURB_FLOOR)."""
+    return {k: v + rng.normal(0.0, scale * abs(v) + _PERTURB_FLOOR) for k, v in particle.items()}
 
 
 def _smc_batch(args):
+    """Try the given **global attempt indices** for one round; each index owns its RNG stream.
+
+    Seeding each attempt by ``default_rng([seed, round, attempt])`` (rather than per worker) makes the
+    proposed particles a function of the global attempt index alone, so the population is identical for
+    any ``n_jobs`` once the accepted particles are ordered by attempt index.
+    """
     (round_idx, parents, prior, perturb_scale, predict, distance,
-     times, bands, obs_flux, obs_err, epsilon, batch_size, seed) = args
-    rng = np.random.default_rng(seed)
+     times, bands, obs_flux, obs_err, epsilon, indices, seed) = args
     accepted = []
-    attempts = 0
-    for _ in range(batch_size):
-        attempts += 1
+    for a in indices:
+        rng = np.random.default_rng([int(seed), int(round_idx), int(a)])
         if round_idx == 0:
             theta = prior.sample(rng)
         else:
@@ -57,17 +65,59 @@ def _smc_batch(args):
         if d < epsilon:
             rec = dict(theta)
             rec["distance"] = d
+            rec["_attempt"] = int(a)
             accepted.append(rec)
-    return accepted, attempts
+    return accepted, len(indices)
 
 
 class ABCSMCSampler(BaseSampler):
+    """Sequential Monte Carlo ABC over rounds of shrinking epsilon (see the module docstring)."""
+
     name = "abc_smc"
 
     def fit(self, lc, model, prior=None, *, n_particles=500, n_rounds=5, epsilon_schedule=None,
             quantile=0.5, perturbation_scale=0.1, distance=chi2_distance, n_jobs=None, seed=0,
             max_attempts_per_round=None):
+        """Fit ``lc`` with ``model`` via ABC-SMC, returning a :class:`SamplerResult`.
+
+        Parameters
+        ----------
+        lc : LightCurve
+            Observed light curve; must carry ``flux_err`` for the chi-square distance.
+        model : str or Model
+            Registered model name or a :class:`~whisper_labia.models.Model`.
+        prior : Prior, optional
+            Parameter prior; defaults to the model's ``default_prior`` (``ValueError`` if neither).
+        n_particles : int, default 500
+            Accepted-particle population size kept each round.
+        n_rounds : int, default 5
+            Number of SMC rounds (overridden by ``len(epsilon_schedule)`` when that is given).
+        epsilon_schedule : list of float, optional
+            Explicit per-round acceptance thresholds; if ``None``, epsilon is adaptive
+            (next epsilon = ``quantile`` of the current round's accepted distances).
+        quantile : float, default 0.5
+            Adaptive-epsilon quantile (ignored when ``epsilon_schedule`` is given).
+        perturbation_scale : float, default 0.1
+            Gaussian perturbation kernel scale (fraction of each parameter value).
+        distance : callable, default :func:`chi2_distance`
+            ``f(obs_flux, obs_err, sim_flux, bands) -> float``; picklable for ``n_jobs > 1``.
+        n_jobs : int, optional
+            Worker processes (default ``min(os.cpu_count(), 8)``). The accepted population is
+            **independent of ``n_jobs``** for a fixed ``seed`` (parallelism affects speed only).
+        seed : int, default 0
+            Base RNG seed; the result is reproducible given ``(seed, n_particles, schedule)``.
+        max_attempts_per_round : int, optional
+            Safety cap on proposals per round (default ``max(200*n_particles, 200000)``); a round that
+            hits it warns and proceeds with however many particles it accepted.
+
+        Returns
+        -------
+        SamplerResult
+            Posterior samples + summary, ``best_params``, ``aic``/``bic``, and per-round diagnostics
+            in ``info['rounds']``.
+        """
         model = get_model(model)
+        distance = get_distance(distance)
         prior = prior if prior is not None else model.default_prior
         if prior is None:
             raise ValueError(f"No prior available for model {model.name!r}; pass prior=...")
@@ -88,7 +138,6 @@ class ABCSMCSampler(BaseSampler):
         if max_attempts_per_round is None:
             max_attempts_per_round = max(200 * n_particles, 200_000)
         batch = max(n_particles // n_jobs, 200)
-        ss = np.random.SeedSequence(seed)
 
         t0 = time.perf_counter()
         parents = None
@@ -101,21 +150,27 @@ class ABCSMCSampler(BaseSampler):
             for round_idx in range(n_rounds):
                 if epsilon_schedule is not None:
                     epsilon = epsilon_schedule[round_idx]
-                accepted, attempts = [], 0
-                while len(accepted) < n_particles and attempts < max_attempts_per_round:
+                accepted, next_attempt = [], 0
+                while len(accepted) < n_particles and next_attempt < max_attempts_per_round:
+                    block = np.arange(next_attempt, next_attempt + n_jobs * batch)
+                    idx_chunks = [c for c in np.array_split(block, n_jobs) if len(c)]
                     args = [(round_idx, parents, prior, perturbation_scale, predict, distance,
-                             times, bands, obs_flux, obs_err, epsilon, batch, s)
-                            for s in ss.spawn(n_jobs)]
+                             times, bands, obs_flux, obs_err, epsilon, idx, seed)
+                            for idx in idx_chunks]
                     results = [_smc_batch(args[0])] if pool is None else list(pool.map(_smc_batch, args))
-                    for acc, att in results:
+                    for acc, _ in results:
                         accepted.extend(acc)
-                        attempts += att
+                    next_attempt += n_jobs * batch
+                attempts = next_attempt
                 total_attempts += attempts
+                # Order by global attempt index so the kept population is identical for any n_jobs.
+                accepted.sort(key=lambda r: r["_attempt"])
                 if len(accepted) < n_particles:
                     warnings.warn(
                         f"ABC-SMC round {round_idx + 1}: only {len(accepted)}/{n_particles} accepted "
                         f"after {attempts} attempts (epsilon={epsilon:g}).", stacklevel=2)
-                population = accepted[:n_particles] if len(accepted) >= n_particles else accepted
+                population = [{k: v for k, v in r.items() if k != "_attempt"}
+                             for r in accepted[:n_particles]]
                 dists = (np.array([p["distance"] for p in population]) if population
                          else np.array([np.inf]))
                 round_info.append({
@@ -156,6 +211,6 @@ class ABCSMCSampler(BaseSampler):
         )
 
 
-def fit_ABC_SMC(lc, model="flare", prior=None, **kwargs):
+def fit_ABC_SMC(lc, model="flare", prior=None, **kwargs) -> SamplerResult:
     """Fit ``lc`` with ``model`` via ABC-SMC. See :meth:`ABCSMCSampler.fit` for options."""
     return ABCSMCSampler().fit(lc, model, prior=prior, **kwargs)

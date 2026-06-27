@@ -183,9 +183,24 @@ def register_manual_band(band, lambda_eff, zero_point):
 
     Use this when SVO is unavailable or the automatic filter mapping is wrong. Takes precedence over
     every SVO lookup.
+
+    .. note::
+       This is a **process-global** registration: it persists for the rest of the interpreter session
+       and affects *all* subsequent band resolutions. Undo it with :func:`unregister_manual_band` (one
+       band) or :func:`clear_manual_bands` (all).
     """
     _MANUAL_BANDS[str(band)] = {
         "lambda_eff": float(lambda_eff), "zero_point": float(zero_point)}
+
+
+def unregister_manual_band(band):
+    """Remove a single manual band override (no-op if it was not registered)."""
+    _MANUAL_BANDS.pop(str(band), None)
+
+
+def clear_manual_bands():
+    """Remove all manual band overrides registered via :func:`register_manual_band`."""
+    _MANUAL_BANDS.clear()
 
 
 def get_filter_metadata(filter_id, *, use_cache=True):
@@ -211,9 +226,11 @@ def find_filter_id(band, *, lambda_eff_hint=None, tol_frac=0.05):
     """Resolve a band label to a single SVO filter ID.
 
     Priority: documented default (:data:`DEFAULT_SVO_IDS`) > wavelength search around
-    ``lambda_eff_hint``. When a wavelength search yields several candidates the choice is ambiguous:
-    we warn, list the candidates, and return the closest-in-wavelength one (a documented default)
-    rather than failing silently. Raises :class:`SvoUnavailable` if nothing matches.
+    ``lambda_eff_hint``. The wavelength search looks within ``±tol_frac`` (default 5%) of the hint;
+    widen it for more candidates (and more ambiguity), narrow it for fewer misses. When a search yields
+    several candidates the choice is ambiguous: we warn, list the candidates, and return the
+    closest-in-wavelength one rather than failing silently. Raises :class:`SvoUnavailable` if nothing
+    matches.
     """
     key = str(band).strip()
     if "/" in key and "." in key:        # already a 'Facility/Instrument.Filter' SVO ID

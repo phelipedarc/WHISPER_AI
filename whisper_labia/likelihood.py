@@ -20,6 +20,8 @@ from scipy.special import erf
 from .io.photometry import AB_ZEROPOINT_JY, POGSON, flux_density_to_mag
 
 _LN2PI = np.log(2.0 * np.pi)
+_MIN_FLUX_JY = 1e-300       # floor a (clipped) model flux before log10 in the flux->magnitude transform
+_MIN_PROB = 1e-30          # floor a probability before log() (upper-limit / mixture terms)
 
 
 def _resolve_space(lc, space):
@@ -53,7 +55,7 @@ class GaussianLikelihood:
     def model_in_space(self, model_flux):
         mf = np.asarray(model_flux, dtype=float)
         if self.space == "magnitude":
-            return flux_density_to_mag(np.clip(mf, 1e-300, None), zeropoint_jy=self.zeropoint_jy)
+            return flux_density_to_mag(np.clip(mf, _MIN_FLUX_JY, None), zeropoint_jy=self.zeropoint_jy)
         return mf
 
     def log_likelihood(self, model_flux):
@@ -103,7 +105,7 @@ class GaussianLikelihoodWithUpperLimits(GaussianLikelihood):
             else:
                 sigma_ul = limit / self.upper_limit_sigma
                 prob = self._cdf((limit - model_ul) / sigma_ul)         # true flux < limit
-            ll += float(np.sum(np.log(np.clip(prob, 1e-30, 1.0 - 1e-30))))
+            ll += float(np.sum(np.log(np.clip(prob, _MIN_PROB, 1.0 - _MIN_PROB))))
         return float(ll)
 
     def summary(self):
@@ -142,16 +144,36 @@ _LIKELIHOODS = {
 }
 
 
+def register_likelihood(name, likelihood_cls, *, overwrite=False):
+    """Register a likelihood class under ``name`` so ``make_likelihood(kind=name)`` can build it.
+
+    The class must accept ``(lc, space=..., **kwargs)`` and expose ``log_likelihood(model_flux) -> float``
+    (subclass :class:`GaussianLikelihood` for the easy path). Mirrors ``register_model`` /
+    ``register_sampler``.
+    """
+    key = str(name).lower()
+    if key in _LIKELIHOODS and not overwrite:
+        raise ValueError(f"Likelihood {name!r} already registered (pass overwrite=True).")
+    _LIKELIHOODS[key] = likelihood_cls
+
+
+def list_likelihoods():
+    """Sorted list of registered likelihood ``kind`` names (incl. aliases)."""
+    return sorted(_LIKELIHOODS)
+
+
 def make_likelihood(lc, kind="auto", space="auto", **kwargs):
     """Build the data-appropriate likelihood (override with ``kind`` / ``space``).
 
     ``kind='auto'`` picks ``gaussian_upper_limits`` when the light curve has upper limits, else
     ``gaussian``. ``space='auto'`` picks magnitude space for magnitude data, flux space otherwise.
+    Use :func:`list_likelihoods` to see the available ``kind`` names and :func:`register_likelihood`
+    to add your own.
     """
     if kind == "auto":
         has_ul = lc.upper_limit is not None and bool(np.any(lc.upper_limit))
         kind = "gaussian_upper_limits" if has_ul else "gaussian"
     key = str(kind).lower()
     if key not in _LIKELIHOODS:
-        raise ValueError(f"Unknown likelihood {kind!r}. Available: {sorted(set(_LIKELIHOODS))}")
+        raise ValueError(f"Unknown likelihood {kind!r}. Available: {list_likelihoods()}")
     return _LIKELIHOODS[key](lc, space=space, **kwargs)

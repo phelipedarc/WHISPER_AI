@@ -1,10 +1,10 @@
 # Whisper (`whisper_labia`) — API Reference
 
-Generated for **v0.0.1.dev0**. Covers **Phase 1 (data ingestion + plotting)** and the **ABC inference
-layer** (pluggable models, priors, distance, samplers).
+Generated for **v0.0.1.dev0**. Covers data ingestion + plotting and the inference layer — four pluggable
+axes (models, samplers, likelihoods, distances) with the ABC / ABC-SMC / SNPE samplers.
 
 - **Environment:** Docker container `phe_sbi`, Python 3.11.
-- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (141 tests; `-m "not slow"` skips the 3 SNPE training tests).
+- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (153 tests; `-m "not slow"` skips the 3 SNPE training tests).
 
 ## Package map
 
@@ -21,36 +21,50 @@ whisper_labia/
 ```
 
 Top-level (`import whisper_labia as wp`): `LightCurve`, `load_lightcurve`, `plot_light_curve`,
-`group_bands`, `FILTER_LOOKUP`, `resolve_band`, `resolve_bands`, `LSST_BAND_INFO`,
-`register_manual_band`, `SvoUnavailable`, `Prior`, `Uniform`, `LogUniform`, `Model`, `register_model`,
-`get_model`, `list_models`, `chi2_distance`, `GaussianLikelihood`, `GaussianLikelihoodWithUpperLimits`,
-`MixtureGaussianLikelihood`, `make_likelihood`, `fit_ABC`, `fit_ABC_SMC`, `fit_SNPE`, `fit`,
-`SamplerResult`, `register_sampler`, `list_samplers`.
+`group_bands`, `FILTER_LOOKUP`, `resolve_band`, `resolve_bands`, `LSST_BAND_INFO`, `SvoUnavailable`,
+`register_manual_band`, `unregister_manual_band`, `clear_manual_bands`, `Prior`, `Uniform`, `LogUniform`,
+`Model`, `register_model`, `get_model`, `list_models`, `chi2_distance`, `register_distance`,
+`get_distance`, `list_distances`, `GaussianLikelihood`, `GaussianLikelihoodWithUpperLimits`,
+`MixtureGaussianLikelihood`, `make_likelihood`, `register_likelihood`, `list_likelihoods`, `fit_ABC`,
+`fit_ABC_SMC`, `fit_SNPE`, `fit`, `SamplerResult`, `register_sampler`, `list_samplers`.
 
 ---
 
 ## 1. `LightCurve`  (`io.schema`)
 
-Constructor fields: `time`, `band` (required); `magnitude`, `magnitude_err`, `flux`, `flux_err`,
-`upper_limit`, `system`, `lambda_eff`, `zero_point` (optional per-point); `name`, `redshift`,
-`luminosity_distance`, `data_mode`, `redshift_prior`, `meta` (scalar). Requires `band` and at least one
-of `magnitude`/`flux`. `flux` holds **flux density in Jy** (the canonical internal unit).
+**`LightCurve` is a subclass of `astropy.table.Table`.** Per-point quantities are **columns** (`time`,
+`band`, `magnitude`, `magnitude_err`, `flux`, `flux_err`, `upper_limit`, `system`, `lambda_eff`,
+`zero_point`, plus any you add) and scalar metadata lives in **`.meta`** (`name`, `redshift`,
+`data_mode`, `luminosity_distance`, `redshift_prior`, `dm`, `refmjd`, …). So full table semantics work:
 
-- **`data_mode`** ∈ `{flux_density, magnitude, flux}` — stored; inferred from the columns when omitted
-  (mag-only → `magnitude`, else `flux_density`). Invalid values raise.
-- **Redshift** is validated in `__post_init__`: finite & `≥ 0`; `z == 0` requires `luminosity_distance`
-  (Mpc); negative/NaN raises. When `redshift is None` the curve is *unknown*: `redshift_known` is
-  `False` and a default `redshift_prior` is attached (the loader emits the one-time warning).
+```python
+lc['absmag_shift'] = lc['magnitude'] + 5        # add / compute columns
+bright = lc[lc['magnitude'] < 18]               # boolean-mask slicing (keeps the subclass + .meta)
+lc.sort('time'); lc.group_by('band')            # any astropy Table method
+lc()                                            # __call__ -> the table itself
+```
 
-Properties: `n_points`, `bands`, `data_mode`, `output_format` (the forward-model comparison space,
-`'magnitude'`/`'flux_density'`), `redshift_known`, `snr` (`flux/flux_err` or `(2.5/ln10)/mag_err`).
+Construct from arrays — `LightCurve(time=, band=, magnitude=|flux=, …, name=, redshift=, data_mode=)`
+(requires `band` + at least one of `magnitude`/`flux`; `flux` is flux density in Jy) — or from anything
+`Table` accepts. `data_mode` ∈ `{flux_density, magnitude, flux}` (inferred from the columns when
+omitted). Redshift is validated at construction: finite & `≥ 0`; `z == 0` requires `luminosity_distance`
+(Mpc); negative/NaN raises; `None` → *unknown* (`redshift_known=False` + a default `redshift_prior`).
 
-Methods (each returns a new `LightCurve` unless noted): `select_bands`, `select_time_window`,
-`select_snr(min_snr=5.0)`, `add_flux(zeropoint_jy=3631.0)` / `add_mag(...)` (constant **AB** zero point;
-raise for `data_mode='flux'`), `resolve_bands(svo_fallback=True)` (fill `lambda_eff`/`zero_point`),
-`set_explosion_date`, `to_dataframe()`. **`lc()` (`__call__`)** returns the enriched dataframe: for
-`flux_density`/`magnitude` the missing column is derived from the **per-band** zero point (`lambda_eff`,
-`zero_point` included); band-integrated `flux` keeps only the flux column.
+For convenience the common quantities are **also** attributes: `lc.time` / `lc.flux` / `lc.band` … return
+the column data (`None` if absent; settable); `lc.redshift` / `lc.data_mode` / `lc.name` /
+`lc.redshift_known` / `lc.luminosity_distance` / `lc.output_format` read `.meta`; `lc.n_points`,
+`lc.bands`, `lc.snr` are derived.
+
+Methods (return a new `LightCurve` unless noted): **`where(**constraints)`** (`col` / `col_min` /
+`col_max` / `col_not`, list = OR — `lc.where(band='r', time_min=58000, upper_limit=False)`);
+`select_bands` / `select_time_window` / `select_snr`; `add_flux(zeropoint_jy=3631.0)` / `add_mag(...)`
+(constant **AB** zero point — pass `zeropoint_jy=lc.zero_point` to opt into per-band; raise for
+`data_mode='flux'`); `resolve_bands(svo_fallback=True)` (fill `lambda_eff`/`zero_point`);
+`set_explosion_date(mjd)` (observer-frame days since explosion); **`calc_phase(reference=, redshift=,
+peak=, hours=)`** (rest-frame phase `(t − ref)/(1+z)`); **`calc_absmag(dm=, redshift=, ebv=, rv=3.1,
+extinction=)`** (distance modulus from `z`/`luminosity_distance` + Milky-Way extinction via CCM89 or an
+explicit `{band: A_mag}` dict → `absmag` column); `to_dataframe()` (→ `to_pandas()`); `lc()` returns the
+table itself.
 
 ## 2. `load_lightcurve(path, *, ...)` → `LightCurve`  (`io.loader`)
 
@@ -252,7 +266,7 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `scripts/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (141 tests, all passing)
+## 8. Test coverage (153 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -271,6 +285,8 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 | `test_svo.py` | 15 | FILTER_LOOKUP→SVO, mocked metadata/index, cache hit + disk cache, corrupt-cache (×4 params), graceful degrade, manual override (no spurious warn), transmission, ambiguity. |
 | `test_ingestion.py` | 25 | data_mode/output_format, `__call__`, redshift (arg/column/unknown/0/neg/NaN/all-NaN), units, band-info, subset preservation, backward-compat ZP, flux-mode. |
 | `test_snpe.py` | 8 | registry/alias + proposal-mode validation (no sbi), torch-prior adapter, density-estimator dispatch; SNPE fit end-to-end / multi-round / embedding-net + custom estimator (`slow`; need `[sbi]`). |
+| `test_table_lc.py` | 7 | LightCurve as astropy.Table: column ops + native methods, property setters, slicing keeps subclass/meta, `where()`, rest-frame `calc_phase`, `calc_absmag` (distance modulus + CCM89/explicit extinction). |
+| `test_registries.py` | 5 | likelihood + distance registries (`register_*`/`list_*`/`get_distance`, distance-by-name in `fit`), manual-band register/unregister/clear. |
 
 Fixtures: `tests/data/at2017gfo.csv`, `tests/data/ztf18aarlhfw.csv`. Figures + ABC JSON in `docs/figures/`.
 All SVO/network calls are **mocked** — no live network in CI. See

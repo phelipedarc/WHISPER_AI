@@ -89,7 +89,7 @@ def load_lightcurve(path, *, name=None, redshift=None, luminosity_distance=None,
                     band_lookup=None, normalize=True, default_band=None, quality_cuts=True,
                     drop_nonfinite=True, flag_filters=None, time_min=None, time_max=None,
                     bands=None, min_snr=None, explosion_date=None, delimiter=None,
-                    resolve_band_info=True, svo_fallback=True):
+                    resolve_band_info=True, svo_fallback=True) -> LightCurve:
     """Load a light-curve CSV into a canonical :class:`LightCurve`.
 
     Auto-detects columns (case-insensitive synonyms; override with ``column_map``), normalizes band

@@ -5,13 +5,38 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Production-readiness pass
+- **Reproducibility (scientific bug fix):** ABC and ABC-SMC results are now **independent of `n_jobs`**.
+  Each simulation/attempt owns an RNG stream derived from its *global index* (not the worker), so a fixed
+  `seed` gives identical posteriors regardless of core count. SNPE seeds the simulator's observational
+  noise per parameter row (same reason — a shared RNG made `num_workers>1` add identical noise). Locked
+  by new determinism tests.
+- **Four pluggable axes, all symmetric:** added `register_likelihood`/`list_likelihoods` and
+  `register_distance`/`get_distance`/`list_distances` to match `register_model`/`register_sampler`;
+  samplers now accept `distance=` by name. `register_manual_band` documents its process-global scope and
+  gains `unregister_manual_band`/`clear_manual_bands`.
+- **Packaging / open-source-ready:** added a `LICENSE` file (GPL-3.0), a `py.typed` marker (shipped via
+  package-data) + `Typing :: Typed` classifier, single-sourced the version (`dynamic`), Python-version
+  classifiers, and Documentation/Issues/Changelog URLs. Return-type hints on the public entry points.
+- **Docs:** new `docs/DESIGN.md` (design rationale + known limitations), `CONTRIBUTING.md`, `CITATION.cff`;
+  ABC/ABC-SMC `fit` docstrings; magic-number guards promoted to named constants; doc accuracy fixes.
+
+### LightCurve is now an `astropy.table.Table`
+- `LightCurve` **subclasses `astropy.table.Table`**: per-point quantities are columns, scalar metadata
+  lives in `.meta`, and full table semantics work — `lc['new'] = lc['flux'] + 5`, boolean-mask slicing
+  (`lc[lc['magnitude'] < 18]`, which keeps the subclass + `.meta`), `sort` / `group_by`, etc. `lc()`
+  returns the table itself. The common quantities stay available as attributes (`lc.time`, `lc.flux`,
+  `lc.redshift`, …) so the samplers/likelihood/plotting are unchanged. `to_dataframe()` → `to_pandas()`.
+- New methods: **`where(**constraints)`** (`col` / `col_min` / `col_max` / `col_not`, list = OR);
+  **`calc_phase(reference=, redshift=, peak=, hours=)`** — rest-frame phase `(t − ref)/(1+z)`;
+  **`calc_absmag(dm=, redshift=, ebv=, rv=3.1, extinction=)`** — distance modulus (from `z` /
+  `luminosity_distance`) + Milky-Way extinction (CCM89 from `ebv`/`rv`, or an explicit `{band: A_mag}`
+  dict) → an `absmag` column. Inspired by `lightcurve_fitting.LC`.
+
 ### Survey-CSV ingestion: data_mode, redshift, astropy units, SVO band fallback
 - `LightCurve.data_mode` is now a stored attribute in `{flux_density, magnitude, flux}` (default
   inferred from the columns; explicit override) with an `output_format` property (`magnitude` /
   `flux_density`) — the forward-model comparison space (the optional redback backend uses the same).
-  Calling the object
-  (`lc()` / `to_dataframe()`) returns the **enriched** dataframe with both flux and magnitude filled in
-  from the per-band zero point.
 - **Redshift** is resolved `redshift=` argument > `redshift` column > unknown. Unknown does *not* fail:
   the curve records `redshift_known=False` + a default `redshift_prior` and warns that `z` will be
   sampled. Validation: `z >= 0`; `z == 0` requires an explicit `luminosity_distance`; negative/NaN is fatal.
@@ -26,9 +51,9 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
   filter ID (offline-safe; corrupt/unusable cache entries are ignored, never crash a load), graceful
   degradation on network failure with a `register_manual_band` override path. astroquery is an optional
   `[svo]` extra; all SVO/network calls are mocked in tests.
-- Note: the enriched dataframe (`lc()`) uses the **per-band** zero point; the `add_flux`/`add_mag`
-  helpers keep the constant **AB 3631 Jy** zero point so the modelling flux the samplers/likelihood
-  consume stays on one zero point across bands (backward-compatible).
+- Note: `add_flux`/`add_mag` keep the constant **AB 3631 Jy** zero point so the modelling flux the
+  samplers/likelihood consume stays on one zero point across bands; pass `zeropoint_jy=lc.zero_point` to
+  opt into the per-band (LSST/SVO) zero points.
 
 ### Data ingestion & plotting
 - `LightCurve` canonical container with pandas-style `select_*` / `add_*` methods, an `snr` property,
@@ -63,9 +88,12 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 ### Fixed
 - `flare` returns 0 before the explosion (was negative for `t<0`); `bazin` is evaluated in log-space
   (numerically stable — no early-time plateau for `tau_rise < tau_fall`).
+- SNPE: the trained `result.posterior` now has its default `x` set every round, so
+  `result.posterior.sample()` works without re-passing `x` (regressed in the truncated-proposal refactor
+  for `num_rounds=1`).
 
 ### Packaging & docs
 - pip-installable from GitHub; relaxed dependency pins (no forced numpy/scipy downgrade); redback is an
   optional `[models]` extra — Phase-1 data + plotting + ABC run with no redback and no compiler.
-- Tutorial, API reference, extensibility guide, an AT2017GFO model-comparison report, and a quick-start
-  notebook. 141 tests.
+- Tutorial, API reference, design rationale, extensibility + contributing guides, an AT2017GFO
+  model-comparison report, and a quick-start notebook. LICENSE (GPL-3.0), CITATION.cff, py.typed. 153 tests.

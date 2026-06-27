@@ -1,7 +1,7 @@
 # Whisper Tutorial — working with transient light curves
 
-A hands-on tour of what Whisper can do today (**Phase 1: data ingestion + plotting**). Everything
-runs inside the `phe_sbi` container. Import once:
+A hands-on tour of what Whisper can do today — **data ingestion, plotting, and fitting** (ABC, ABC-SMC,
+and SNPE). Import once:
 
 ```python
 import whisper_labia as wp
@@ -25,14 +25,33 @@ obviously bad rows (non-finite values, non-positive errors).
 
 ## 2. Inspect it
 
+`LightCurve` **is an `astropy.table.Table`** — per-point quantities are columns, scalar metadata lives
+in `.meta`, and every table operation works directly:
+
 ```python
-lc.n_points              # 645
+lc['mag_plus_5'] = lc['magnitude'] + 5     # add / compute columns
+bright = lc[lc['magnitude'] < 18]          # boolean-mask slicing (keeps the LightCurve + .meta)
+lc.sort('time'); lc.group_by('band')       # any astropy Table method
+lc()                                       # __call__ -> the table itself
+```
+
+The common quantities are also attributes (handy, and what the samplers use):
+
+```python
+lc.n_points              # number of points (== len(lc))
 lc.bands                 # sorted unique band labels
-lc.data_mode             # 'flux_density' | 'magnitude' | 'flux'  (stored attribute)
+lc.time, lc.flux, lc.magnitude   # column data as arrays (None if absent; settable)
+lc.data_mode             # 'flux_density' | 'magnitude' | 'flux'  (in .meta)
 lc.output_format         # forward-model comparison space: 'magnitude' | 'flux_density'
 lc.redshift_known        # True/False — False means a redshift prior must be sampled
 lc.snr                   # per-point signal-to-noise (computed from the errors)
-lc()                     # the ENRICHED dataframe (both flux & magnitude); == lc.to_dataframe()
+lc.to_dataframe()        # a pandas view (== lc.to_pandas())
+```
+
+**Select** with `where(...)` (`col` / `col_min` / `col_max` / `col_not`, list = OR), or `select_*`:
+
+```python
+lc.where(band='r', time_min=58000, time_max=58020, upper_limit=False)
 ```
 
 ## 3. Clean & shape — chainable, each call returns a **new** `LightCurve`
@@ -72,21 +91,35 @@ flux_lc.add_mag()  # flux -> AB magnitudes
 ```
 
 `add_flux`/`add_mag` use the constant **AB 3631 Jy** zero point (so the modelling flux the samplers see
-stays on one zero point). For the **per-band** physical conversion (LSST/SVO zero points) just call the
-curve — `lc()` returns a dataframe with both columns filled in (see §5).
+stays on one zero point). Pass `zeropoint_jy=lc.zero_point` to opt into the per-band LSST/SVO zero
+points instead.
+
+### Rest-frame phase and absolute magnitude
+
+```python
+ph = lc.set_explosion_date(57982.0).calc_phase()     # rest-frame phase = (t − ref)/(1+z); adds 'phase'
+pk = lc.calc_phase(peak=True)                         # phase relative to the brightest detection
+ab = lc.calc_absmag(ebv=0.1)                          # absmag = mag − dm − A_band
+```
+
+`calc_phase` uses the curve's redshift for the `(1+z)` time dilation (reference defaults to the
+explosion epoch, the peak, or the first detection). `calc_absmag` gets the distance modulus from the
+redshift (Planck18) or `luminosity_distance`, and Milky-Way extinction from `ebv`/`rv` (CCM89, per
+band's effective wavelength) or an explicit `extinction={'r': 0.3, ...}` dict. Both add a column and
+record what they used in `.meta`.
 
 ## 5. Data mode, redshift, units & band resolution
 
 These four are wired into `load_lightcurve` and the `LightCurve` itself.
 
-### Data mode and the enriched dataframe
+### Data mode
 `data_mode` is `flux_density` (canonical unit Jy, default), `magnitude` (dimensionless AB), or `flux`
-(band-integrated erg/s/cm²). It is inferred from the columns but you can set it explicitly. **Calling**
-the curve returns the enriched dataframe — the missing one of flux/magnitude is derived from each band's
-zero point:
+(band-integrated erg/s/cm²). It is inferred from the columns but you can set it explicitly. To fill in
+the other photometry column, call `add_flux()` / `add_mag()` (the light curve is a table, so the new
+column is just added):
 
 ```python
-df = lc()                # both 'flux' and 'magnitude' columns (+ lambda_eff, zero_point, snr)
+lc = lc.add_mag()        # adds a 'magnitude' column from 'flux' (constant AB zero point)
 lc.output_format         # 'flux_density' / 'magnitude' — the forward-model comparison space
 ```
 

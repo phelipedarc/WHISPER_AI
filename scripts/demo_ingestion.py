@@ -43,10 +43,10 @@ mag_csv = write_csv(
     "time,magnitude,e_magnitude,band\n"
     "1.0,20.0,0.05,g\n2.0,20.4,0.05,r\n3.0,20.8,0.06,i\n")
 lc = wp.load_lightcurve(mag_csv, redshift=0.1)
-print(f"data_mode       = {lc.data_mode!r}   (stored; inferred from the columns)")
+print(f"data_mode       = {lc.data_mode!r}   (stored in .meta; inferred from the columns)")
 print(f"output_format   = {lc.output_format!r}   (forward-model comparison space: magnitude / flux_density)")
-print("lc()  ->  enriched dataframe (flux DERIVED from the per-band zero point):")
-print(lc().to_string(index=False))
+print("LightCurve is an astropy Table; add the derived flux column with add_flux():")
+print(lc.add_flux().to_dataframe().to_string(index=False))
 
 
 # ---------------------------------------------------------------------------

@@ -34,11 +34,17 @@ def test_abc_recovers_amplitude():
     assert np.isfinite(res.aic) and np.isfinite(res.bic)
 
 
-def test_abc_serial_and_parallel():
+def test_abc_reproducible_and_njobs_independent():
+    """Same (seed) -> identical posterior, regardless of n_jobs (the scientific reproducibility contract)."""
     lc = _synthetic({"amplitude": 4.0, "rise_time": 2.0, "decay_time": 12.0}, n=30)
     r1 = fit_ABC(lc, "flare", n_simulations=2000, quantile=0.05, n_jobs=1, seed=3)
-    r2 = fit_ABC(lc, "flare", n_simulations=2000, quantile=0.05, n_jobs=4, seed=3)
-    assert r1.n_samples > 0 and r2.n_samples > 0
+    r1b = fit_ABC(lc, "flare", n_simulations=2000, quantile=0.05, n_jobs=1, seed=3)
+    r4 = fit_ABC(lc, "flare", n_simulations=2000, quantile=0.05, n_jobs=4, seed=3)
+    assert r1.n_samples > 0
+    assert r1.samples.equals(r1b.samples) and r1.best_params == r1b.best_params   # determinism
+    assert r1.samples.equals(r4.samples) and r1.best_params == r4.best_params      # n_jobs-independent
+    assert fit_ABC(lc, "flare", n_simulations=2000, quantile=0.05, n_jobs=1, seed=4).best_params \
+        != r1.best_params                                                          # different seed -> different
 
 
 def test_abc_acceptance_count():

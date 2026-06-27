@@ -1,12 +1,29 @@
-"""Canonical light-curve container shared across Whisper."""
+"""Canonical light-curve container: a subclass of :class:`astropy.table.Table`.
+
+``LightCurve`` **is** an astropy ``Table`` -- per-point quantities are columns (``time``, ``band``,
+``magnitude``, ``flux``, ...) and scalar metadata lives in ``.meta`` (``name``, ``redshift``,
+``data_mode``, ``luminosity_distance``, ``dm``, ``refmjd``, ...). So all the usual table ergonomics
+work directly::
+
+    lc['absmag_shift'] = lc['magnitude'] + 5      # add/compute columns
+    bright = lc[lc['magnitude'] < 18]             # boolean-mask slicing (keeps the subclass + meta)
+    lc.sort('time'); lc.group_by('band')          # any Table method
+
+For convenience and backward compatibility the common quantities are **also** exposed as attributes:
+``lc.time`` / ``lc.flux`` / ``lc.band`` ... return the column data (or ``None`` if absent), and
+``lc.redshift`` / ``lc.data_mode`` / ``lc.name`` read from ``.meta``. Calling the object (``lc()``)
+returns the table itself.
+
+``data_mode`` is one of :data:`VALID_DATA_MODES`; ``flux`` is stored in janskys (Jy, flux density) or
+erg/s/cm^2 for band-integrated ``flux`` mode. Subsetting (``select_*`` / :meth:`where`) returns a new
+``LightCurve``.
+"""
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
-import pandas as pd
+from astropy.table import Table
 
 from .photometry import (
     AB_ZEROPOINT_JY,
@@ -18,320 +35,406 @@ from .photometry import (
 #: Allowed values for :attr:`LightCurve.data_mode`.
 VALID_DATA_MODES = ("flux_density", "magnitude", "flux")
 
-#: data_mode -> the forward-model comparison space (``magnitude`` | ``flux_density``); band-integrated
-#: ``flux`` maps onto ``flux_density``. (Optional physical-model backends such as redback expose this
-#: same two-value ``output_format``, so the two line up.)
+#: data_mode -> the forward-model comparison space ('magnitude' | 'flux_density'); band-integrated
+#: ``flux`` maps onto ``flux_density``. (Optional physical-model backends such as redback use the same.)
 _OUTPUT_FORMAT = {"flux_density": "flux_density", "magnitude": "magnitude", "flux": "flux_density"}
 
-#: Default prior spec attached when the redshift is unknown (override per object). The actual
-#: sampling lives in Phase 2 (priors.py / PriorSet); here it is just a serialisable hint.
+#: Default prior spec attached when the redshift is unknown (override per object). Sampling lives in
+#: Phase 2; here it is just a serialisable hint.
 DEFAULT_REDSHIFT_PRIOR = {"type": "Uniform", "low": 0.001, "high": 1.0, "name": "redshift"}
 
+#: Per-point columns Whisper understands (others may be added freely as ordinary columns).
+_FLOAT_COLS = ("time", "magnitude", "magnitude_err", "flux", "flux_err", "lambda_eff", "zero_point")
+_SCALAR_META = ("name", "redshift", "luminosity_distance", "data_mode", "redshift_prior")
 
-def _str_array(x):
-    return np.array([str(v) for v in x])
 
+class LightCurve(Table):
+    """A multi-band transient light curve, stored as an :class:`astropy.table.Table`.
 
-@dataclass
-class LightCurve:
-    """A multi-band transient light curve.
-
-    Per-point arrays (all the same length): ``time`` (MJD), ``band``, and at least one of
-    ``magnitude`` / ``flux`` (with optional ``*_err``). ``system`` records the magnitude system
-    per point ('AB'/'Vega'/'unknown'); ``upper_limit`` flags non-detections; ``lambda_eff`` /
-    ``zero_point`` carry the per-point effective wavelength (Angstrom) and zero point (Jy) once the
-    bands are resolved (FILTER_LOOKUP/SVO). Scalar metadata: ``name``, ``redshift``,
-    ``luminosity_distance`` (Mpc; required when ``redshift == 0``), ``data_mode``, ``meta``.
-
-    ``data_mode`` is one of :data:`VALID_DATA_MODES` -- ``"flux_density"`` (canonical unit Jy,
-    default), ``"magnitude"`` (dimensionless AB), or ``"flux"`` (band-integrated erg/s/cm^2). When
-    not given it is inferred from which columns are present. Use :attr:`output_format` for the
-    forward-model comparison space (``magnitude`` | ``flux_density``).
-
-    Subsetting methods (``select_*``) and column-adding methods (``add_*``) follow a pandas-like
-    naming convention and each return a **new** ``LightCurve``. Calling the object (``lc()``) returns
-    the enriched :class:`pandas.DataFrame`: for ``flux_density`` / ``magnitude`` data the missing one
-    of flux/magnitude is derived from the per-band zero point; band-integrated ``flux`` mode keeps
-    only the flux column (no density<->magnitude mapping applies).
+    Construct from arrays (``LightCurve(time=..., band=..., flux=..., ...)``) or from anything
+    ``Table`` accepts. See the module docstring for the column / metadata layout.
     """
 
-    time: np.ndarray
-    band: np.ndarray
-    magnitude: Optional[np.ndarray] = None
-    magnitude_err: Optional[np.ndarray] = None
-    flux: Optional[np.ndarray] = None
-    flux_err: Optional[np.ndarray] = None
-    upper_limit: Optional[np.ndarray] = None
-    system: Optional[np.ndarray] = None
-    name: Optional[str] = None
-    redshift: Optional[float] = None
-    meta: dict = field(default_factory=dict)
-    data_mode: Optional[str] = None
-    lambda_eff: Optional[np.ndarray] = None
-    zero_point: Optional[np.ndarray] = None
-    luminosity_distance: Optional[float] = None
-    redshift_prior: Optional[dict] = None
+    def __init__(self, data=None, *, time=None, band=None, magnitude=None, magnitude_err=None,
+                 flux=None, flux_err=None, upper_limit=None, system=None, lambda_eff=None,
+                 zero_point=None, name=None, redshift=None, luminosity_distance=None, data_mode=None,
+                 redshift_prior=None, meta=None, **kwargs):
+        building = data is None and any(v is not None for v in (time, band, magnitude, flux))
+        if not building:
+            # astropy path: slice / copy / construct-from-table-or-columns. meta (incl. our scalars)
+            # is propagated by astropy; just backfill defaults for a bare table.
+            super().__init__(data, meta=meta, **kwargs)
+            self._ensure_meta_defaults()
+            return
 
-    def __post_init__(self):
-        self.time = np.asarray(self.time, dtype=float)
-        n = self.time.size
-        if self.band is None:
+        if band is None:
             raise ValueError("LightCurve requires a 'band' array.")
-        self.band = _str_array(self.band)
-        if self.band.size != n:
-            raise ValueError(f"band length {self.band.size} != time length {n}")
-        for attr in ("magnitude", "magnitude_err", "flux", "flux_err", "lambda_eff", "zero_point"):
-            v = getattr(self, attr)
+        cols = {"time": np.asarray(time, dtype=float),
+                "band": np.array([str(b) for b in band])}
+        n = len(cols["time"])
+        for nm, v in (("magnitude", magnitude), ("magnitude_err", magnitude_err),
+                      ("flux", flux), ("flux_err", flux_err),
+                      ("lambda_eff", lambda_eff), ("zero_point", zero_point)):
             if v is not None:
-                v = np.asarray(v, dtype=float)
-                if v.size != n:
-                    raise ValueError(f"{attr} length {v.size} != time length {n}")
-                setattr(self, attr, v)
-        if self.upper_limit is not None:
-            self.upper_limit = np.asarray(self.upper_limit, dtype=bool)
-            if self.upper_limit.size != n:
-                raise ValueError(f"upper_limit length {self.upper_limit.size} != time length {n}")
-        if self.system is not None:
-            self.system = _str_array(self.system)
-            if self.system.size != n:
-                raise ValueError(f"system length {self.system.size} != time length {n}")
-        if self.magnitude is None and self.flux is None:
+                cols[nm] = np.asarray(v, dtype=float)
+        if upper_limit is not None:
+            cols["upper_limit"] = np.asarray(upper_limit, dtype=bool)
+        if system is not None:
+            cols["system"] = np.array([str(s) for s in system])
+        for nm, arr in cols.items():
+            if len(arr) != n:
+                raise ValueError(f"{nm} length {len(arr)} != time length {n}")
+        if "magnitude" not in cols and "flux" not in cols:
             raise ValueError("LightCurve requires either 'magnitude' or 'flux'.")
 
-        self.data_mode = self._resolve_data_mode(self.data_mode)
+        super().__init__(cols, meta=dict(meta) if meta else {})
+        self.meta["name"] = name
+        self.meta["redshift"] = None if redshift is None else float(redshift)
+        self.meta["luminosity_distance"] = luminosity_distance
+        self.meta["data_mode"] = self._resolve_data_mode(data_mode)
+        self.meta["redshift_prior"] = redshift_prior
         self._validate_redshift()
-        if not self.redshift_known and self.redshift_prior is None:
-            self.redshift_prior = dict(DEFAULT_REDSHIFT_PRIOR)
+        if self.meta["redshift"] is None and self.meta["redshift_prior"] is None:
+            self.meta["redshift_prior"] = dict(DEFAULT_REDSHIFT_PRIOR)
 
-    # --- data mode ---
+    # ------------------------------------------------------------------ setup helpers
+    def _ensure_meta_defaults(self):
+        for key in _SCALAR_META:
+            self.meta.setdefault(key, None)
+        if self.meta.get("data_mode") is None:
+            self.meta["data_mode"] = self._resolve_data_mode(None)
+
     def _resolve_data_mode(self, data_mode):
         if data_mode is not None:
             if data_mode not in VALID_DATA_MODES:
                 raise ValueError(
                     f"data_mode={data_mode!r} invalid; expected one of {VALID_DATA_MODES}.")
             return data_mode
-        # Infer from the columns present (keeps historical behaviour: mag data -> 'magnitude').
-        if self.magnitude is not None:
-            return "magnitude"
-        return "flux_density"
+        return "magnitude" if "magnitude" in self.colnames else "flux_density"
 
-    @property
-    def output_format(self):
-        """Forward-model comparison space for this data mode (``'magnitude'`` | ``'flux_density'``).
-
-        Optional physical-model backends (e.g. redback) expose this same two-value convention.
-        """
-        return _OUTPUT_FORMAT[self.data_mode]
-
-    # --- redshift ---
     def _validate_redshift(self):
-        z = self.redshift
+        z = self.meta.get("redshift")
         if z is None:
-            return  # unknown -- handled by redshift_prior; loader warns once.
+            return
         z = float(z)
         if not np.isfinite(z):
-            raise ValueError(f"redshift must be finite; got {self.redshift!r}.")
+            raise ValueError(f"redshift must be finite; got {z!r}.")
         if z < 0:
             raise ValueError(f"redshift must be >= 0; got {z}.")
-        if z == 0 and self.luminosity_distance is None:
+        if z == 0 and self.meta.get("luminosity_distance") is None:
             raise ValueError(
                 "redshift == 0 leaves the luminosity distance undefined; pass an explicit "
                 "luminosity_distance (Mpc) instead of z=0.")
-        self.redshift = z
+        self.meta["redshift"] = z
+
+    # ------------------------------------------------------------------ scalar metadata (properties)
+    @property
+    def name(self):
+        return self.meta.get("name")
+
+    @name.setter
+    def name(self, value):
+        self.meta["name"] = value
+
+    @property
+    def redshift(self):
+        return self.meta.get("redshift")
 
     @property
     def redshift_known(self):
         """``True`` when a redshift was supplied; ``False`` means a prior must be sampled."""
-        return self.redshift is not None
-
-    # --- basic info ---
-    def __len__(self):
-        return int(self.time.size)
+        return self.meta.get("redshift") is not None
 
     @property
+    def redshift_prior(self):
+        return self.meta.get("redshift_prior")
+
+    @property
+    def luminosity_distance(self):
+        return self.meta.get("luminosity_distance")
+
+    @property
+    def data_mode(self):
+        return self.meta.get("data_mode")
+
+    @property
+    def output_format(self):
+        """Forward-model comparison space ('magnitude' | 'flux_density'); see :data:`_OUTPUT_FORMAT`."""
+        return _OUTPUT_FORMAT[self.data_mode]
+
+    # ------------------------------------------------------------------ per-point columns (attrs)
+    def _col(self, name):
+        return self[name].data if name in self.colnames else None
+
+    def _set_col(self, name, value):
+        if value is None:
+            if name in self.colnames:
+                self.remove_column(name)
+        else:
+            self[name] = value
+
+    time = property(lambda self: self._col("time"),
+                    lambda self, v: self._set_col("time", v))
+    band = property(lambda self: self._col("band"),
+                    lambda self, v: self._set_col("band", v))
+    magnitude = property(lambda self: self._col("magnitude"),
+                         lambda self, v: self._set_col("magnitude", v))
+    magnitude_err = property(lambda self: self._col("magnitude_err"),
+                             lambda self, v: self._set_col("magnitude_err", v))
+    flux = property(lambda self: self._col("flux"),
+                    lambda self, v: self._set_col("flux", v))
+    flux_err = property(lambda self: self._col("flux_err"),
+                        lambda self, v: self._set_col("flux_err", v))
+    upper_limit = property(lambda self: self._col("upper_limit"),
+                           lambda self, v: self._set_col("upper_limit", v))
+    system = property(lambda self: self._col("system"),
+                      lambda self, v: self._set_col("system", v))
+    lambda_eff = property(lambda self: self._col("lambda_eff"),
+                          lambda self, v: self._set_col("lambda_eff", v))
+    zero_point = property(lambda self: self._col("zero_point"),
+                          lambda self, v: self._set_col("zero_point", v))
+
+    # ------------------------------------------------------------------ derived info
+    @property
     def n_points(self):
-        return int(self.time.size)
+        return len(self)
 
     @property
     def bands(self):
-        return sorted(set(self.band.tolist()))
+        return sorted(set(np.asarray(self["band"]).tolist()))
 
     @property
     def snr(self):
-        """Per-point signal-to-noise ratio.
-
-        Uses ``flux / flux_err`` when flux errors are present, else the magnitude-error relation
-        ``SNR = (2.5 / ln 10) / magnitude_err``. Raises ``ValueError`` if no errors are available.
-        """
-        if self.flux is not None and self.flux_err is not None:
-            return np.abs(self.flux) / self.flux_err
-        if self.magnitude_err is not None:
-            return mag_err_to_snr(self.magnitude_err)
+        """Per-point signal-to-noise (``flux/flux_err`` or ``(2.5/ln10)/magnitude_err``)."""
+        if "flux" in self.colnames and "flux_err" in self.colnames:
+            return np.abs(self["flux"].data) / self["flux_err"].data
+        if "magnitude_err" in self.colnames:
+            return mag_err_to_snr(self["magnitude_err"].data)
         raise ValueError("Cannot compute SNR: need flux_err or magnitude_err.")
 
-    # --- copy / subset (return new LightCurves) ---
-    def _subset(self, mask):
-        def sub(v):
-            return None if v is None else v[mask]
+    # ------------------------------------------------------------------ selection
+    def where(self, **constraints):
+        """Return the subset matching ``column=value`` constraints (astropy-table-fitting style).
 
-        return LightCurve(
-            time=self.time[mask], band=self.band[mask],
-            magnitude=sub(self.magnitude), magnitude_err=sub(self.magnitude_err),
-            flux=sub(self.flux), flux_err=sub(self.flux_err),
-            upper_limit=sub(self.upper_limit), system=sub(self.system),
-            lambda_eff=sub(self.lambda_eff), zero_point=sub(self.zero_point),
-            name=self.name, redshift=self.redshift, data_mode=self.data_mode,
-            luminosity_distance=self.luminosity_distance,
-            redshift_prior=None if self.redshift_prior is None else dict(self.redshift_prior),
-            meta=dict(self.meta),
-        )
-
-    def _copy(self):
-        return self._subset(np.ones(self.n_points, dtype=bool))
+        Each key is a column name, optionally suffixed: ``col`` (==), ``col_not`` (!=), ``col_min``
+        (>=), ``col_max`` (<=). A list value means "match any of" (or, with ``_not``, "match none of").
+        E.g. ``lc.where(band='r', time_min=58000, time_max=58020, upper_limit=False)``.
+        """
+        mask = np.ones(len(self), dtype=bool)
+        for key, val in constraints.items():
+            if key.endswith("_min"):
+                col = key[:-4]
+                m = self[col].data >= val
+            elif key.endswith("_max"):
+                col = key[:-4]
+                m = self[col].data <= val
+            elif key.endswith("_not"):
+                col = key[:-4]
+                vals = val if isinstance(val, (list, tuple, set, np.ndarray)) else [val]
+                m = ~np.isin(self[col].data, list(vals))
+            else:
+                col = key
+                vals = val if isinstance(val, (list, tuple, set, np.ndarray)) else [val]
+                m = np.isin(self[col].data, list(vals))
+            if col not in self.colnames:
+                raise KeyError(f"where(): no column {col!r}; have {self.colnames}")
+            mask &= m
+        return self[mask]
 
     def select_bands(self, bands):
         """Keep only the given band(s) (str or iterable)."""
         bands = [bands] if isinstance(bands, str) else list(bands)
-        return self._subset(np.isin(self.band, bands))
+        return self[np.isin(self["band"].data, bands)]
 
     def select_time_window(self, time_min=None, time_max=None):
         """Keep points with ``time_min <= time <= time_max``."""
-        mask = np.ones(self.n_points, dtype=bool)
+        mask = np.ones(len(self), dtype=bool)
         if time_min is not None:
-            mask &= self.time >= time_min
+            mask &= self["time"].data >= time_min
         if time_max is not None:
-            mask &= self.time <= time_max
-        return self._subset(mask)
+            mask &= self["time"].data <= time_max
+        return self[mask]
 
     def select_snr(self, min_snr=5.0):
-        """Keep points with signal-to-noise ratio >= ``min_snr`` (e.g. 3 or 5)."""
-        return self._subset(self.snr >= min_snr)
+        """Keep points with signal-to-noise ratio >= ``min_snr``."""
+        return self[self.snr >= min_snr]
 
-    # --- band resolution (effective wavelength + zero point) ---
+    # ------------------------------------------------------------------ band resolution
     def _resolved_zero_point(self, svo_fallback=False):
-        """Per-point zero point (Jy): stored values if present, else resolve bands locally.
-
-        Unresolved bands (NaN) fall back to the AB 3631 Jy zero point so conversions stay finite.
-        """
-        if self.zero_point is not None:
-            zp = self.zero_point
+        """Per-point zero point (Jy): stored if present, else resolved locally; NaN -> AB 3631."""
+        if "zero_point" in self.colnames:
+            zp = self["zero_point"].data
         else:
             from .bands import resolve_bands
-            _, zp, _ = resolve_bands(self.band, svo_fallback=svo_fallback, warn=False)
+            _, zp, _ = resolve_bands(self["band"].data, svo_fallback=svo_fallback, warn=False)
         zp = np.asarray(zp, dtype=float)
         return np.where(np.isfinite(zp), zp, AB_ZEROPOINT_JY)
 
     def resolve_bands(self, *, svo_fallback=True):
-        """Copy with ``lambda_eff`` / ``zero_point`` filled from FILTER_LOOKUP (+ SVO fallback)."""
+        """Copy with ``lambda_eff`` / ``zero_point`` columns filled (FILTER_LOOKUP + SVO fallback)."""
         from .bands import resolve_bands as _resolve
-        lam, zp, _ = _resolve(self.band, svo_fallback=svo_fallback)
-        out = self._copy()
-        out.lambda_eff = lam
-        out.zero_point = zp
+        lam, zp, _ = _resolve(self["band"].data, svo_fallback=svo_fallback)
+        out = self.copy()
+        out["lambda_eff"] = lam
+        out["zero_point"] = zp
         return out
 
-    # --- derived columns ---
-    def add_flux(self, zeropoint_jy=AB_ZEROPOINT_JY):
-        """Copy with ``flux`` (+ ``flux_err``) from magnitude (AB). No-op if flux present.
+    def _zp_for_conversion(self, zeropoint_jy):
+        return AB_ZEROPOINT_JY if zeropoint_jy is None else zeropoint_jy
 
-        Uses the constant AB ``zeropoint_jy`` (3631 Jy) so the modelling flux stays on one zero point
-        for all bands -- this matches what the samplers / likelihood / plotting consume. For the
-        physical per-band conversion (LSST/SVO zero points) use the enriched dataframe from
-        :meth:`__call__` / :meth:`to_dataframe` instead. Raises for band-integrated ``flux`` data.
-        """
+    # ------------------------------------------------------------------ derived columns
+    def add_flux(self, zeropoint_jy=AB_ZEROPOINT_JY):
+        """Copy with ``flux`` (+ ``flux_err``) from magnitude (constant AB zero point). No-op if present."""
         if self.data_mode == "flux":
-            raise ValueError(
-                "add_flux is for flux-density data; data_mode='flux' is band-integrated energy "
-                "flux (erg/s/cm^2) and has no magnitude<->flux-density mapping.")
-        if self.flux is not None:
-            return self
-        if self.magnitude is None:
+            raise ValueError("add_flux is for flux-density data; data_mode='flux' is band-integrated.")
+        if "flux" in self.colnames:
+            return self.copy()
+        if "magnitude" not in self.colnames:
             raise ValueError("Cannot add flux: no magnitude available.")
-        out = self._copy()
-        if self.magnitude_err is None:
-            out.flux = mag_to_flux_density(self.magnitude, None, zeropoint_jy)
+        out = self.copy()
+        if "magnitude_err" in self.colnames:
+            out["flux"], out["flux_err"] = mag_to_flux_density(
+                self["magnitude"].data, self["magnitude_err"].data, zeropoint_jy)
         else:
-            out.flux, out.flux_err = mag_to_flux_density(
-                self.magnitude, self.magnitude_err, zeropoint_jy)
+            out["flux"] = mag_to_flux_density(self["magnitude"].data, None, zeropoint_jy)
         return out
 
     def add_mag(self, zeropoint_jy=AB_ZEROPOINT_JY):
-        """Copy with ``magnitude`` (+ ``magnitude_err``) from flux (AB). No-op if magnitude present.
-
-        Uses the constant AB ``zeropoint_jy`` (3631 Jy); see :meth:`add_flux` for why, and use the
-        enriched dataframe for per-band zero points. Raises for band-integrated ``flux`` data.
-        """
+        """Copy with ``magnitude`` (+ ``magnitude_err``) from flux (constant AB zero point). No-op if present."""
         if self.data_mode == "flux":
-            raise ValueError(
-                "add_mag is for flux-density data; data_mode='flux' is band-integrated energy "
-                "flux (erg/s/cm^2) and has no flux-density<->magnitude mapping.")
-        if self.magnitude is not None:
-            return self
-        if self.flux is None:
+            raise ValueError("add_mag is for flux-density data; data_mode='flux' is band-integrated.")
+        if "magnitude" in self.colnames:
+            return self.copy()
+        if "flux" not in self.colnames:
             raise ValueError("Cannot add magnitude: no flux available.")
-        out = self._copy()
-        if self.flux_err is None:
-            out.magnitude = flux_density_to_mag(self.flux, None, zeropoint_jy)
+        out = self.copy()
+        if "flux_err" in self.colnames:
+            out["magnitude"], out["magnitude_err"] = flux_density_to_mag(
+                self["flux"].data, self["flux_err"].data, zeropoint_jy)
         else:
-            out.magnitude, out.magnitude_err = flux_density_to_mag(
-                self.flux, self.flux_err, zeropoint_jy)
+            out["magnitude"] = flux_density_to_mag(self["flux"].data, None, zeropoint_jy)
         return out
 
     def set_explosion_date(self, explosion_date):
-        """Copy with time measured in **days since ``explosion_date`` (MJD)**; day 0 = explosion.
-
-        Records ``meta['explosion_mjd']``. Epochs before the explosion become negative.
-        """
-        out = self._copy()
-        out.time = out.time - float(explosion_date)
+        """Copy with ``time`` measured in **days since ``explosion_date`` (MJD)**; day 0 = explosion."""
+        out = self.copy()
+        out["time"] = out["time"].data - float(explosion_date)
         out.meta["explosion_mjd"] = float(explosion_date)
         return out
 
-    # --- export ---
-    def _enriched(self):
-        """Return (magnitude, flux) arrays with the missing one filled via per-band zero points.
+    def calc_phase(self, reference=None, redshift=None, peak=False, hours=False):
+        """Copy with a rest-frame ``phase`` column: ``(time - reference) / (1 + z)``.
 
-        Band-integrated ``flux`` data is left as-is (no density<->magnitude conversion applies).
-        Points whose band could not be resolved (zero point NaN) keep ``NaN`` in the derived column.
+        ``reference`` (MJD) defaults to ``meta['explosion_mjd']`` / ``meta['refmjd']`` / the earliest
+        detection. ``redshift`` defaults to the curve's redshift (0 if unknown). With ``peak=True`` the
+        reference is the brightest detection (``meta['peakdate']``); ``hours=True`` gives rest-frame
+        hours. The reference and redshift used are recorded in ``meta``.
         """
-        magnitude, flux = self.magnitude, self.flux
-        if self.data_mode == "flux":
-            return magnitude, flux
-        zp = self._resolved_zero_point()
-        if magnitude is None and flux is not None:
-            with np.errstate(invalid="ignore", divide="ignore"):
-                magnitude = flux_density_to_mag(flux, None, zp)
-        elif flux is None and magnitude is not None:
-            with np.errstate(invalid="ignore"):
-                flux = mag_to_flux_density(magnitude, None, zp)
-        return magnitude, flux
+        out = self.copy()
+        z = redshift if redshift is not None else (out.redshift or 0.0)
+        if reference is None:
+            if peak:
+                if "magnitude" not in out.colnames:
+                    raise ValueError("peak=True needs a 'magnitude' column.")
+                det = out.where(upper_limit=False) if "upper_limit" in out.colnames else out
+                reference = float(det["time"].data[np.argmin(det["magnitude"].data)])
+                out.meta["peakdate"] = reference
+            elif "explosion_mjd" in out.meta:
+                reference = 0.0   # set_explosion_date already shifted time to days-since-explosion
+            else:
+                det = out.where(upper_limit=False) if "upper_limit" in out.colnames else out
+                reference = float(np.min(det["time"].data))
+        out.meta["refmjd"] = float(reference)
+        out.meta["redshift_for_phase"] = float(z)
+        phase = (out["time"].data - float(reference)) / (1.0 + float(z))
+        out["phase"] = phase * 24.0 if hours else phase
+        return out
 
+    def calc_absmag(self, dm=None, redshift=None, ebv=None, rv=3.1, extinction=None):
+        """Copy with an ``absmag`` column = ``magnitude - dm - A_band``.
+
+        ``dm`` (distance modulus) defaults to ``5 log10(luminosity_distance) + 25`` if a luminosity
+        distance is set, else ``Planck18.distmod(redshift)``. Milky-Way extinction ``A_band`` is taken
+        from the ``extinction`` dict (``{band: A_mag}``) if given, otherwise computed per band from
+        ``ebv`` / ``rv`` via the CCM89 law using each band's effective wavelength (no correction where
+        the wavelength is unknown). The ``dm`` / ``ebv`` used are recorded in ``meta``.
+        """
+        if "magnitude" not in self.colnames:
+            raise ValueError("calc_absmag needs a 'magnitude' column (call add_mag() first).")
+        out = self.copy()
+        z = redshift if redshift is not None else out.redshift
+        if dm is None:
+            ld = out.luminosity_distance
+            if ld is not None:
+                dm = 5.0 * np.log10(float(ld) * 1e6) - 5.0
+            elif z:
+                from astropy.cosmology import Planck18
+                dm = float(Planck18.distmod(z).value)
+            else:
+                dm = 0.0
+        out.meta["dm"] = float(dm)
+
+        a_band = np.zeros(len(out), dtype=float)
+        if extinction is not None:
+            a_band = np.array([float(extinction.get(str(b), 0.0)) for b in out["band"].data])
+            out.meta["extinction"] = dict(extinction)
+        elif ebv:
+            lam = out._resolved_lambda_eff()
+            a_band = _ccm89_a_lambda(lam, float(ebv), float(rv))
+            out.meta["ebv"] = float(ebv)
+            out.meta["rv"] = float(rv)
+        out["absmag"] = out["magnitude"].data - float(dm) - a_band
+        return out
+
+    def _resolved_lambda_eff(self):
+        if "lambda_eff" in self.colnames:
+            return self["lambda_eff"].data
+        from .bands import resolve_bands
+        lam, _, _ = resolve_bands(self["band"].data, svo_fallback=False, warn=False)
+        return lam
+
+    # ------------------------------------------------------------------ export
     def to_dataframe(self):
-        """Tabular view (``pandas.DataFrame``).
-
-        Includes both ``magnitude`` and ``flux`` (the missing one derived from the per-band zero
-        point), ``lambda_eff`` / ``zero_point`` when known, and ``snr`` when errors are available.
-        """
-        magnitude, flux = self._enriched()
-        data = {"time": self.time, "band": self.band}
-        derived = {"magnitude": magnitude, "magnitude_err": self.magnitude_err,
-                   "flux": flux, "flux_err": self.flux_err,
-                   "upper_limit": self.upper_limit, "system": self.system,
-                   "lambda_eff": self.lambda_eff, "zero_point": self.zero_point}
-        for key, v in derived.items():
-            if v is not None:
-                data[key] = v
-        try:
-            data["snr"] = self.snr
-        except ValueError:
-            pass
-        return pd.DataFrame(data)
+        """Return a :class:`pandas.DataFrame` view (alias for astropy's ``to_pandas``)."""
+        return self.to_pandas()
 
     def __call__(self):
-        """Return the enriched :class:`pandas.DataFrame` (alias for :meth:`to_dataframe`)."""
-        return self.to_dataframe()
+        """Return the light curve itself (it *is* a table -- assign/compute columns directly)."""
+        return self
 
     def __repr__(self):
         z = "unknown" if self.redshift is None else self.redshift
         return (f"LightCurve(name={self.name!r}, n_points={self.n_points}, "
                 f"bands={self.bands}, mode={self.data_mode!r}, z={z})")
+
+
+def _ccm89_a_lambda(lambda_eff_aa, ebv, rv):
+    """Milky-Way extinction A(lambda) in mag from the Cardelli, Clayton & Mathis (1989) law.
+
+    ``lambda_eff_aa`` is the effective wavelength per point (Angstrom; NaN -> no extinction). Valid for
+    the optical/NIR (1.1 <= x <= 3.3 um^-1) and UV; outside that range it clamps to the nearest regime.
+    """
+    lam = np.asarray(lambda_eff_aa, dtype=float)
+    x = 1.0 / (lam * 1e-4)                       # inverse microns
+    a = np.zeros_like(x)
+    b = np.zeros_like(x)
+    finite = np.isfinite(x)
+    # optical/NIR: 1.1 <= x <= 3.3
+    opt = finite & (x >= 1.1) & (x <= 3.3)
+    y = x[opt] - 1.82
+    a[opt] = (1 + 0.17699 * y - 0.50447 * y**2 - 0.02427 * y**3 + 0.72085 * y**4
+              + 0.01979 * y**5 - 0.77530 * y**6 + 0.32999 * y**7)
+    b[opt] = (1.41338 * y + 2.28305 * y**2 + 1.07233 * y**3 - 5.38434 * y**4
+              - 0.62251 * y**5 + 5.30260 * y**6 - 2.09002 * y**7)
+    # near-IR: 0.3 <= x < 1.1
+    nir = finite & (x >= 0.3) & (x < 1.1)
+    a[nir] = 0.574 * x[nir]**1.61
+    b[nir] = -0.527 * x[nir]**1.61
+    # UV: 3.3 < x <= 8 (simplified Fa/Fb=0 base term)
+    uv = finite & (x > 3.3) & (x <= 8.0)
+    xu = x[uv]
+    a[uv] = 1.752 - 0.316 * xu - 0.104 / ((xu - 4.67) ** 2 + 0.341)
+    b[uv] = -3.090 + 1.825 * xu + 1.206 / ((xu - 4.62) ** 2 + 0.263)
+    av = rv * ebv
+    a_lambda = av * (a + b / rv)
+    return np.where(finite, a_lambda, 0.0)

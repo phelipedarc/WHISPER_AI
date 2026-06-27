@@ -17,6 +17,17 @@ def test_smc_registered():
     assert "abc_smc" in list_samplers()
 
 
+def test_smc_reproducible_and_njobs_independent():
+    """Fixed seed -> identical accepted population, independent of n_jobs."""
+    lc = _synthetic({"amplitude": 4.0, "rise_time": 2.0, "decay_time": 12.0}, n=30)
+    kw = dict(n_particles=150, n_rounds=3, quantile=0.5, seed=5)
+    r1 = fit_ABC_SMC(lc, "flare", n_jobs=1, **kw)
+    r1b = fit_ABC_SMC(lc, "flare", n_jobs=1, **kw)
+    r4 = fit_ABC_SMC(lc, "flare", n_jobs=4, **kw)
+    assert r1.samples.equals(r1b.samples) and r1.best_params == r1b.best_params   # determinism
+    assert r1.samples.equals(r4.samples) and r1.best_params == r4.best_params      # n_jobs-independent
+
+
 def test_smc_recovers_amplitude():
     lc = _synthetic({"amplitude": 5.0, "rise_time": 3.0, "decay_time": 15.0})
     res = fit_ABC_SMC(lc, "flare", n_particles=300, n_rounds=4, quantile=0.5, n_jobs=4, seed=1)

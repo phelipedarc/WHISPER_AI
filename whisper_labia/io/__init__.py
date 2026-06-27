@@ -21,9 +21,11 @@ from .photometry import (
 from .schema import VALID_DATA_MODES, LightCurve
 from .svo import (
     SvoUnavailable,
+    clear_manual_bands,
     get_transmission_data,
     register_manual_band,
     resolve_band_svo,
+    unregister_manual_band,
 )
 from .units import to_canonical
 
@@ -49,6 +51,8 @@ __all__ = [
     "svo",
     "SvoUnavailable",
     "register_manual_band",
+    "unregister_manual_band",
+    "clear_manual_bands",
     "resolve_band_svo",
     "get_transmission_data",
 ]

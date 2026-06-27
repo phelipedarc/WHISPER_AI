@@ -1,7 +1,15 @@
 # Report — Survey-CSV ingestion upgrade (data_mode · redshift · astropy units · SVO bands)
 
+> **Historical snapshot (2026-06-27).** This report captures the state right after the ingestion
+> upgrade (**133 tests**, and a `LightCurve` whose `lc()` returned an *enriched dataframe*). Both have
+> since moved on: `LightCurve` is now an `astropy.Table` and `lc()` returns the table itself (call
+> `add_flux()`/`add_mag()` to derive the other photometry column), and the suite is larger. For the
+> **live** test count and the current API contract, see
+> [`API_REFERENCE.md`](API_REFERENCE.md) (§8) and [`DESIGN.md`](DESIGN.md). The numbers and `lc()`
+> wording below are preserved as a record of that milestone.
+
 _Generated 2026-06-27. Covers the ingestion upgrade: what changed, the adversarial review and its
-fixes, the offline demo, and the full test results (133 passing)._
+fixes, the offline demo, and the full test results (133 passing at the time)._
 
 ## 1. Summary
 

@@ -19,3 +19,30 @@ def chi2_distance(obs_flux, obs_flux_err, sim_flux, bands=None):
     obs_flux_err = np.asarray(obs_flux_err, dtype=float)
     residual = (obs_flux - sim_flux) / obs_flux_err
     return float(np.sum(residual * residual))
+
+
+# --- registry (so distances are discoverable / usable by name, like models/samplers/likelihoods) ---
+_DISTANCES = {"chi2": chi2_distance, "chi_square": chi2_distance}
+
+
+def register_distance(name, fn, *, overwrite=False):
+    """Register a distance ``f(obs_flux, obs_flux_err, sim_flux, bands) -> float`` under ``name``."""
+    key = str(name).lower()
+    if key in _DISTANCES and not overwrite:
+        raise ValueError(f"Distance {name!r} already registered (pass overwrite=True).")
+    _DISTANCES[key] = fn
+
+
+def get_distance(distance):
+    """Resolve ``distance``: a callable passes through; a registered name is looked up."""
+    if callable(distance):
+        return distance
+    key = str(distance).lower()
+    if key not in _DISTANCES:
+        raise KeyError(f"Unknown distance {distance!r}. Available: {list_distances()}")
+    return _DISTANCES[key]
+
+
+def list_distances():
+    """Sorted list of registered distance names."""
+    return sorted(_DISTANCES)
