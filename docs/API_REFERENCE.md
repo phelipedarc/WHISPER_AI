@@ -1,10 +1,10 @@
 # Whisper (`whisper_labia`) — API Reference
 
 Generated for **v0.0.1.dev0**. Covers data ingestion + plotting and the inference layer — four pluggable
-axes (models, samplers, likelihoods, distances) with the ABC / ABC-SMC / SNPE samplers.
+axes (models, samplers, likelihoods, distances) with the ABC / ABC-SMC / MCMC / SNPE samplers.
 
 - **Environment:** Docker container `phe_sbi`, Python 3.11.
-- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (153 tests; `-m "not slow"` skips the 3 SNPE training tests).
+- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (172 tests; `-m "not slow"` skips the 3 SNPE training + 1 mck19 fit + 1 kilonova fit tests).
 
 ## Package map
 
@@ -15,8 +15,8 @@ whisper_labia/
   priors.py            # Uniform, LogUniform, Prior
   distance.py          # chi2_distance
   likelihood.py        # GaussianLikelihood, ...WithUpperLimits, Mixture..., make_likelihood
-  models/              # Model + register/get/list + built-ins flare/bazin/gaussian_rise
-  samplers/            # BaseSampler, SamplerResult, ABCSampler, ABCSMCSampler, SNPESampler, fit_ABC(_SMC)/fit_SNPE, fit
+  models/              # Model + register/get/list + built-ins flare/bazin/gaussian_rise + physical mck19 + redback two_component_kilonova
+  samplers/            # BaseSampler, SamplerResult, ABCSampler, ABCSMCSampler, MCMCSampler, SNPESampler, fit_ABC(_SMC)/fit_MCMC/fit_SNPE, fit
   io/                  # LightCurve, load_lightcurve, bands, photometry, units, svo
 ```
 
@@ -26,7 +26,7 @@ Top-level (`import whisper_labia as wp`): `LightCurve`, `load_lightcurve`, `plot
 `Model`, `register_model`, `get_model`, `list_models`, `chi2_distance`, `register_distance`,
 `get_distance`, `list_distances`, `GaussianLikelihood`, `GaussianLikelihoodWithUpperLimits`,
 `MixtureGaussianLikelihood`, `make_likelihood`, `register_likelihood`, `list_likelihoods`, `fit_ABC`,
-`fit_ABC_SMC`, `fit_SNPE`, `fit`, `SamplerResult`, `register_sampler`, `list_samplers`.
+`fit_ABC_SMC`, `fit_MCMC`, `fit_SNPE`, `fit`, `SamplerResult`, `register_sampler`, `list_samplers`.
 
 ---
 
@@ -148,14 +148,36 @@ A model maps parameters to predicted flux: `predict(params: dict, times: np.ndar
 | `list_models` | `()` | Sorted registered model names. |
 | `Model` | dataclass: `name, predict, parameters, default_prior, description` | Callable: `model(params, times, bands)`. |
 
-Built-in models (band-independent, vectorized; `t` = days since explosion; scale `amplitude` to your
-flux units for real data):
+Built-in **toy** models (band-independent, vectorized; `t` = days since explosion; scale `amplitude` to
+your flux units for real data):
 
 | Name | Form | Parameters |
 |---|---|---|
 | `flare` | `A·(1 − e^(−t/t_rise))·e^(−t/t_decay)` | amplitude, rise_time, decay_time |
 | `bazin` | `A·e^(−(t−t0)/τ_fall) / (1 + e^(−(t−t0)/τ_rise))` | amplitude, t0, tau_rise, tau_fall |
 | `gaussian_rise` | Gaussian rise to peak at `t0`, then exp decay | amplitude, t0, sigma_rise, tau_decay |
+
+Built-in **physical** models:
+
+| Name | Physics | Parameters |
+|---|---|---|
+| `mck19` | EM flare from a **BBH merger in an AGN disk** — a GW-recoil-kicked remnant shocks a bound-gas **hotspot** that radiates as a blackbody: a `sin²` rise to the ram-pressure delay `t_ram`, then exponential decay back to the disk baseline. McKernan et al. 2019 ([ApJL 884, L50](https://iopscience.iop.org/article/10.3847/2041-8213/ab4886)), implementation of [Darc 2025](https://arxiv.org/abs/2506.02224). | v_kick, M_smbh, M_bh, r_bh, redshift |
+| `two_component_kilonova` | **Kilonova** (NS–NS merger) with a blue (low-κ) + red (high-κ) ejecta component, via the optional **redback** backend (`[models]` extra). Band-integrated AB magnitudes (redshift-aware) → flux density (Jy). | mej_1, vej_1, kappa_1, temperature_floor_1, mej_2, vej_2, kappa_2, temperature_floor_2, redshift |
+
+`two_component_kilonova` is the **first redback-backed model** — redback is imported lazily, so WHISPER
+and `list_models()` work without it; only `predict` needs the `[models]` extra. It wraps redback's
+`two_component_kilonova_model`, mapping WHISPER bands → redback LSST filters and converting redback's AB
+magnitude to flux density (a machine-precision round-trip). It is an **expensive** simulator (~50 ms per
+band-call), so **SNPE** (amortized) is the natural sampler; ABC/MCMC want modest budgets. See
+`scripts/demo_kilonova.py` and `scripts/fit_kilonova_at2017gfo.py`.
+
+`mck19` is **band-dependent** — it returns flux density (Jy) at each `(time, band)`, evaluating the
+hotspot + disk blackbody at the band's effective wavelength (via Whisper's band system) and the redshift
+(Planck18 luminosity distance + time dilation). `t = 0` is the merger; the flare peaks at the
+observer-frame delay `t_ram`. Self-contained (astropy constants/cosmology only — no `speclite`); the AB
+magnitude is the monochromatic-at-`λ_eff` approximation to the original LSST filter integration. Fixed
+disk constants (`mdot=0.05` Edd, `alpha=0.1`) do not enter the light-curve *shape*. See
+`scripts/demo_mck19.py` for the g/r/i light curve.
 
 > For **parallel** ABC (`n_jobs>1`) the `predict` function must be picklable (module-level, not a
 > closure/lambda). Closures work with `n_jobs=1`.
@@ -166,10 +188,12 @@ Any `f(obs_flux, obs_flux_err, sim_flux, bands) -> float` can be passed as a cus
 
 ### 6.4 Samplers  (`whisper_labia.samplers`)
 
-`fit_ABC(lc, model="flare", ...)`, `fit_ABC_SMC(lc, model="flare", ...)`, and
-`fit_SNPE(lc, model="flare", ...)` → `SamplerResult`. `fit(lc, model, sampler="abc"|"abc_smc"|"snpe",
-**kwargs)` is the generic dispatcher. `list_samplers()` → `['abc', 'abc_smc', 'npe', 'snpe']`
-(`npe` is an alias of `snpe`); `register_sampler(name, cls)` adds your own.
+`fit_ABC(lc, model="flare", ...)`, `fit_ABC_SMC(lc, model="flare", ...)`, `fit_MCMC(lc, model="flare",
+...)`, and `fit_SNPE(lc, model="flare", ...)` → `SamplerResult`. `fit(lc, model,
+sampler="abc"|"abc_smc"|"mcmc"|"snpe", **kwargs)` is the generic dispatcher. `list_samplers()` →
+`['abc', 'abc_smc', 'mcmc', 'npe', 'snpe']` (`npe` is an alias of `snpe`); `register_sampler(name, cls)`
+adds your own. **ABC/ABC-SMC** use the χ² distance; **MCMC/SNPE** use the shared likelihood layer, so all
+four reach the same posterior on the same data (see `scripts/compare_samplers.py`).
 
 **`ABCSampler.fit(lc, model, prior=None, *, ...)`**:
 
@@ -188,6 +212,18 @@ rejection: round 0 draws from the prior; later rounds resample + Gaussian-pertur
 under a shrinking epsilon (explicit `epsilon_schedule`, or adaptive `quantile` of the previous round's
 distances). Perturbs only parameters and rejects proposals outside the prior; `info` carries per-round
 epsilon / acceptance / `total_simulations`.
+
+**`MCMCSampler.fit(lc, model, prior=None, *, nwalkers=None, nsteps=5000, burnin=1000, thin=10,
+initial_guess=None, initial_scatter=1e-3, space="auto", likelihood="auto", seed=0, progress=False,
+moves=None)`** — affine-invariant ensemble MCMC via `emcee` (`samplers.mcmc`; emcee is a **core**
+dependency). The log-posterior is the Whisper prior + the **shared likelihood layer**
+(`make_likelihood(lc, kind=likelihood, space=space)`), so MCMC uses the same physically consistent,
+`data_mode`-aware likelihood as the others (flux data → flux space, magnitude data → magnitude space).
+`nwalkers` defaults to `max(2·ndim+2, 4·ndim)` (forced even); walkers init from the prior unless
+`initial_guess` is given. Sampling is **seeded/reproducible**. `best_params` is the max-posterior draw;
+`max_log_likelihood`/`AIC`/`BIC` are exact Gaussian values; `info` carries acceptance fraction +
+autocorrelation time; the `emcee.EnsembleSampler` is attached as `result.emcee_sampler`. `fit_MCMC(...)`
+is the convenience wrapper.
 
 **`SNPESampler.fit(lc, model, prior=None, *, num_rounds=2, num_simulations=1000, space="auto",
 density_estimator="maf", embedding_net=None, hidden_features=None, num_transforms=None, num_bins=None,
@@ -256,8 +292,10 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
   approximate posterior are reliable; rigorous posterior weights are a planned option.
 - **ABC posteriors are approximate** (broadened by the acceptance ε); tighten ε / use SMC for sharper ones.
 - **Toy models** are band-independent analytic forms: `flare` = 0 before explosion; `bazin` computed
-  stably in log-space; `gaussian_rise` has a derivative kink at the peak. Physical, band-dependent
-  models can optionally be supplied by the external redback `[models]` extra (a models/priors source only).
+  stably in log-space; `gaussian_rise` has a derivative kink at the peak. **`mck19`** is a built-in
+  *physical*, **band-dependent** model (blackbody hotspot + AGN disk, redshift-aware). Further physical,
+  band-dependent models can optionally be supplied by the external redback `[models]` extra (a
+  models/priors source only).
 - **SNR(magnitude)** uses `(2.5/ln10)/σ_m`, valid for small magnitude errors.
 
 ## 7. Internals
@@ -266,7 +304,7 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `scripts/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (153 tests, all passing)
+## 8. Test coverage (172 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -287,6 +325,9 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 | `test_snpe.py` | 8 | registry/alias + proposal-mode validation (no sbi), torch-prior adapter, density-estimator dispatch; SNPE fit end-to-end / multi-round / embedding-net + custom estimator (`slow`; need `[sbi]`). |
 | `test_table_lc.py` | 7 | LightCurve as astropy.Table: column ops + native methods, property setters, slicing keeps subclass/meta, `where()`, rest-frame `calc_phase`, `calc_absmag` (distance modulus + CCM89/explicit extinction). |
 | `test_registries.py` | 5 | likelihood + distance registries (`register_*`/`list_*`/`get_distance`, distance-by-name in `fit`), manual-band register/unregister/clear. |
+| `test_mcmc.py` | 4 | MCMC recovery + reproducibility, data-mode-consistent likelihood space, and ABC↔MCMC posterior agreement. |
+| `test_mck19.py` | 7 | `mck19` AGN-disk BBH flare: registration, finite/positive flux, band-dependence, peak at `t_ram`, redshift dimming, no-bands warning, and end-to-end MCMC recovery in magnitude space (`slow`). |
+| `test_two_component_kilonova.py` | 8 | redback kilonova: registry/prior + band-mapping + no-bands error (no redback needed); flux finite/positive, band-dependence, machine-precision redback round-trip, mixed-band predict, and SNPE recovery (`slow`) — all guarded by `importorskip("redback")`. |
 
 Fixtures: `tests/data/at2017gfo.csv`, `tests/data/ztf18aarlhfw.csv`. Figures + ABC JSON in `docs/figures/`.
 All SVO/network calls are **mocked** — no live network in CI. See

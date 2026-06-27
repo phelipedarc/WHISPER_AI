@@ -5,6 +5,47 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### `two_component_kilonova` — first redback-backed model
+- New built-in **`two_component_kilonova`** (`whisper_labia/models/two_component_kilonova.py`): a
+  blue (low-κ) + red (high-κ) kilonova via the optional **redback** package (`[models]` extra), wrapping
+  redback's `two_component_kilonova_model`. Parameters: `mej_1/2`, `vej_1/2`, `kappa_1/2`,
+  `temperature_floor_1/2`, `redshift` (default prior follows the Darc kilonova-simulation setup).
+- **redback is imported lazily** — WHISPER and `list_models()` work without it; only `predict` needs the
+  extra (clear `ImportError` pointing to `pip install 'whisper-labia[models]'` otherwise). This is the
+  template for a planned series of redback-backed models.
+- Band-dependent: WHISPER bands → redback LSST filters (`g→lsstg`…); redback's band-integrated AB
+  magnitude is converted to WHISPER's canonical **flux density (Jy)** as an exact (machine-precision)
+  round-trip, so the shared likelihood/samplers treat it like any other model. Expensive simulator
+  (~50 ms/call) → **SNPE** is the natural sampler; `predict` is module-level (parallel-ABC safe).
+- `scripts/demo_kilonova.py` (light curve) and `scripts/fit_kilonova_at2017gfo.py` (ABC/MCMC/SNPE fit of
+  AT2017GFO — which, being a real kilonova, this model fits well, unlike `mck19`).
+
+### `mck19` physical model — BBH merger in an AGN disk
+- New built-in **`mck19`** model (`whisper_labia/models/mck19.py`): the optical flare from a
+  binary-black-hole merger embedded in an AGN accretion disk. A GW-recoil-kicked remnant shocks a
+  bound-gas **hotspot** that radiates as a blackbody — a `sin²` rise to the ram-pressure delay `t_ram`,
+  then exponential decay back to the disk baseline. McKernan et al. 2019
+  ([ApJL 884, L50](https://iopscience.iop.org/article/10.3847/2041-8213/ab4886)); implementation of
+  [Darc 2025](https://arxiv.org/abs/2506.02224). Parameters: `v_kick`, `M_smbh`, `M_bh`, `r_bh`,
+  `redshift` (default prior spans the Darc 2025 grid).
+- **First band-dependent built-in:** returns flux density (Jy) per `(time, band)`, evaluating the
+  hotspot + disk blackbody at each band's effective wavelength (via Whisper's band system) and the
+  source redshift (Planck18 luminosity distance + time dilation). Self-contained — astropy
+  constants/cosmology only (no `speclite`/`extinction`); the AB magnitude is the monochromatic-at-`λ_eff`
+  approximation to the original LSST filter integration. Fits with every sampler through the shared
+  likelihood (an MCMC recovery test confirms data-mode-consistent magnitude-space fitting).
+- `scripts/demo_mck19.py` renders the g/r/i light curve (`docs/figures/mck19_lightcurve.png`).
+
+### MCMC sampler (emcee)
+- New **`MCMCSampler`** (`mcmc`, `fit_MCMC`) — affine-invariant ensemble MCMC via `emcee` (a core
+  dependency). The log-posterior is the Whisper prior + the **shared likelihood layer**
+  (`make_likelihood`), so MCMC uses the *same physically consistent, `data_mode`-aware likelihood* as
+  ABC/ABC-SMC/SNPE (flux data → flux space, magnitude data → magnitude space). Walkers init from the
+  prior (or a given `initial_guess`); sampling is **seeded/reproducible**; exact Gaussian AIC/BIC; the
+  `emcee.EnsembleSampler` is attached as `result.emcee_sampler`.
+- `scripts/compare_samplers.py` — sanity check that ABC / ABC-SMC / MCMC / SNPE converge to the **same
+  posterior** on `gaussian_rise`, with an overlaid corner plot.
+
 ### Production-readiness pass
 - **Reproducibility (scientific bug fix):** ABC and ABC-SMC results are now **independent of `n_jobs`**.
   Each simulation/attempt owns an RNG stream derived from its *global index* (not the worker), so a fixed
@@ -96,4 +137,4 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 - pip-installable from GitHub; relaxed dependency pins (no forced numpy/scipy downgrade); redback is an
   optional `[models]` extra — Phase-1 data + plotting + ABC run with no redback and no compiler.
 - Tutorial, API reference, design rationale, extensibility + contributing guides, an AT2017GFO
-  model-comparison report, and a quick-start notebook. LICENSE (GPL-3.0), CITATION.cff, py.typed. 153 tests.
+  model-comparison report, and a quick-start notebook. LICENSE (GPL-3.0), CITATION.cff, py.typed. 172 tests (redback-backed model tests skip without the [models] extra).

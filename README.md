@@ -11,8 +11,8 @@ pluggable: you can register your own, or optionally pull them from the external
 auxiliary dependency used *only* as a source of models and priors — Whisper does not otherwise rely on it.
 
 > **Status:** early development. Data ingestion (with astropy units, redshift handling, and SVO band
-> resolution), plotting, and the **ABC / ABC-SMC / SNPE** samplers are done and tested (**153 unit
-> tests**). Likelihood-based samplers (MCMC, Dynesty) and likelihood-in-the-loop fitting come next
+> resolution), plotting, and the **ABC / ABC-SMC / MCMC / SNPE** samplers are done and tested (**172 unit
+> tests**). Nested sampling (Dynesty) and likelihood-in-the-loop ABC come next
 > (see [`docs/DESIGN.md`](docs/DESIGN.md) § Planned extensions).
 
 ## Install
@@ -59,10 +59,12 @@ wp.plot_light_curve(lc, layout="report")     # apparent-mag + flux overview, all
 - **Convert & derive** — magnitude ↔ flux, per-point **SNR**, set the **explosion date** (day 0).
 - **Plot** — a report (mag + flux) or a per-band grid (apparent / absolute mag, or flux), with clear
   marker conventions (detections = circles, SNR<3 = △, upper limits = ▽).
-- **Fit** — **ABC**, **ABC-SMC** (parallel), and **SNPE/NPE** (Sequential Neural Posterior Estimation
-  via `sbi`) with built-in models `flare`, `bazin`, `gaussian_rise` or your own (`register_model`);
-  posteriors + AIC/BIC + JSON. See the [AT2017GFO model-comparison report](docs/REPORT_at2017gfo.md).
-  Models *and* samplers are pluggable.
+- **Fit** — **ABC**, **ABC-SMC** (parallel), **MCMC** (emcee), and **SNPE/NPE** (Sequential Neural Posterior Estimation
+  via `sbi`) with built-in models `flare`, `bazin`, `gaussian_rise`, the physical **`mck19`** (a
+  BBH-merger flare in an AGN disk; McKernan 2019 / Darc 2025), the **`two_component_kilonova`** (NS–NS
+  merger via the optional **redback** backend), or your own (`register_model`); posteriors + AIC/BIC +
+  JSON. See the [AT2017GFO model-comparison report](docs/REPORT_at2017gfo.md). Models *and* samplers are
+  pluggable.
 
 ## Learn more
 

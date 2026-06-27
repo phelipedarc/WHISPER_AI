@@ -274,6 +274,44 @@ simulations**.
 
 ![model comparison](figures/at2017gfo_model_comparison.png)
 
+### A physical, band-dependent model: `mck19`
+
+The toy models above ignore the band. **`mck19`** is a built-in *physical* model — the optical flare
+from a **binary-black-hole merger in an AGN disk** (McKernan 2019; implementation of Darc 2025). A
+GW-recoil-kicked remnant shocks a bound-gas hotspot that radiates as a blackbody: a `sin²` rise to the
+ram-pressure delay `t_ram`, then exponential decay back to the disk baseline. It returns **flux density
+per band** (the blackbody is evaluated at each band's effective wavelength and the source redshift), so
+g/r/i differ — and it fits with any sampler through the same likelihood:
+
+```python
+res = wp.fit_MCMC(lc, "mck19", nsteps=2000)   # params: v_kick, M_smbh, M_bh, r_bh, redshift
+```
+
+Because the data is in magnitude space the likelihood compares in magnitude automatically (the model
+predicts flux). `scripts/demo_mck19.py` renders the light curve:
+
+![mck19 light curve](figures/mck19_lightcurve.png)
+
+### A redback-backed model: `two_component_kilonova`
+
+WHISPER can also drive **redback** models (the optional `[models]` extra). **`two_component_kilonova`**
+wraps redback's blue + red kilonova: WHISPER bands map to redback LSST filters, and redback's
+band-integrated AB magnitude is converted to WHISPER's flux density — so it fits through the *same*
+samplers and likelihood as everything else. redback is imported lazily, so the package works without it
+(only `predict` needs the extra).
+
+```python
+res = wp.fit_SNPE(lc, "two_component_kilonova", num_simulations=3000)   # SNPE suits the slow simulator
+```
+
+It's an expensive simulator (~50 ms/call), so **SNPE** (which amortizes simulation cost) is the natural
+sampler; ABC/MCMC work with modest budgets. Because AT2017GFO is a real kilonova, this model fits it
+well (low residual, no prior-railing) — the clean counterpart to the `mck19` exercise above.
+`scripts/demo_kilonova.py` renders the light curve (note the blue bands fading faster — kilonova
+reddening):
+
+![kilonova light curve](figures/kilonova_lightcurve.png)
+
 ### Likelihoods & space (flux vs magnitude)
 
 All inference can run in **flux** or **apparent-magnitude** space, with Gaussian, upper-limit, and
@@ -286,8 +324,32 @@ lik = make_likelihood(lc, space="magnitude")                 # default by data t
 lik = GaussianLikelihoodWithUpperLimits(lc, space="flux")    # use non-detections in flux space
 ```
 
-(Implemented and tested; wiring them into the samplers — `fit_ABC(..., space=..., likelihood=...)` —
-is the next step.)
+(For ABC the likelihood enters via the χ² distance; **MCMC and SNPE use these likelihoods directly** —
+see below. Routing a chosen likelihood into ABC's acceptance is the next step.)
+
+### MCMC (emcee)
+
+Likelihood-based posterior sampling with affine-invariant ensemble MCMC. It reuses the **same**
+likelihood as the other samplers (so it respects the data's `data_mode` — flux data is fit in flux
+space, magnitude data in magnitude space), and `emcee` is a core dependency (no extra needed):
+
+```python
+res = wp.fit_MCMC(r, "flare", nsteps=5000, burnin=1000, thin=10, seed=0)
+print(res)                              # SamplerResult(sampler='mcmc', ..., AIC=..., runtime=...s)
+res.summary["amplitude"]               # median / ci16 / ci84, same as every sampler
+res.info["mean_acceptance_fraction"]   # diagnostics; res.emcee_sampler is the raw emcee object
+```
+
+Walkers initialise from the prior (no starting guess required); pass `initial_guess={...}` to start from
+a point instead. Sampling is **seeded and reproducible**.
+
+### All samplers agree — a sanity check
+
+ABC, ABC-SMC, MCMC and SNPE share Whisper's model + prior + likelihood, so on the same data they reach
+**the same posterior**. [`scripts/compare_samplers.py`](../scripts/compare_samplers.py) fits all four to
+`gaussian_rise` and overlays them in one corner plot:
+
+![sampler comparison](figures/sampler_comparison_corner.png)
 
 ### Neural posterior estimation (SNPE)
 
