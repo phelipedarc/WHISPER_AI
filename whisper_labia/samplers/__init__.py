@@ -7,8 +7,10 @@ from __future__ import annotations
 from .abc import ABCSampler, fit_ABC
 from .abc_smc import ABCSMCSampler, fit_ABC_SMC
 from .base import BaseSampler, SamplerResult, summarize_posterior
+from .snpe import SNPESampler, fit_SNPE
 
-_SAMPLERS = {"abc": ABCSampler, "abc_smc": ABCSMCSampler}
+# "snpe" and "npe" both map to the same sampler (num_rounds=1 is amortized NPE, >1 is sequential).
+_SAMPLERS = {"abc": ABCSampler, "abc_smc": ABCSMCSampler, "snpe": SNPESampler, "npe": SNPESampler}
 
 
 def register_sampler(name, sampler_cls, *, overwrite=False):
@@ -34,6 +36,6 @@ def fit(lc, model, sampler="abc", **kwargs):
 
 __all__ = [
     "BaseSampler", "SamplerResult", "summarize_posterior",
-    "ABCSampler", "fit_ABC", "ABCSMCSampler", "fit_ABC_SMC", "fit",
+    "ABCSampler", "fit_ABC", "ABCSMCSampler", "fit_ABC_SMC", "SNPESampler", "fit_SNPE", "fit",
     "register_sampler", "get_sampler", "list_samplers",
 ]

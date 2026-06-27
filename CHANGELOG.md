@@ -43,9 +43,13 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 - Models: registry (`register_model` / `list_models`) + built-ins **`flare`**, **`bazin`**,
   **`gaussian_rise`**.
 - Distance: `chi2_distance` (pluggable; any `f(obs, err, sim, bands) -> float`).
-- Samplers: registry (`register_sampler` / `list_samplers`) + **`ABCSampler`** (parallel rejection)
-  and **`ABCSMCSampler`** (sequential, adaptive or explicit epsilon). `SamplerResult` with posterior
-  summary, best-fit, AIC / BIC / max-log-likelihood (χ² ≙ −2 ln L), and `to_json`.
+- Samplers: registry (`register_sampler` / `list_samplers`) + **`ABCSampler`** (parallel rejection),
+  **`ABCSMCSampler`** (sequential, adaptive or explicit epsilon), and **`SNPESampler`** — **Sequential
+  Neural Posterior Estimation** (`snpe`/`npe`, `fit_SNPE`) via `sbi`: the simulator is Whisper's forward
+  model + Gaussian noise, the prior is auto-adapted to torch (`Uniform`→`BoxUniform`, mixed→
+  `MultipleIndependent`), `num_rounds>1` is sequential SNPE-C, and the trained sbi posterior is attached
+  as `result.posterior`. Lazy-imported optional `[sbi]` extra. `SamplerResult` with posterior summary,
+  best-fit, AIC / BIC / max-log-likelihood (χ² ≙ −2 ln L; SNPE uses the exact Gaussian value), `to_json`.
 - Likelihoods (`likelihood.py`): `GaussianLikelihood`, `GaussianLikelihoodWithUpperLimits`,
   `MixtureGaussianLikelihood`, `make_likelihood` — **flux or apparent-magnitude space**, default by
   data type, upper limits in flux/mag. _Standalone + tested; sampler integration pending._
@@ -57,4 +61,4 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 ### Packaging & docs
 - pip-installable from GitHub; relaxed dependency pins (no forced numpy/scipy downgrade); redback is an
   optional `[models]` extra — Phase-1 data + plotting + ABC run with no redback and no compiler.
-- Tutorial, API reference, extensibility guide, and an AT2017GFO model-comparison report. 133 tests.
+- Tutorial, API reference, extensibility guide, and an AT2017GFO model-comparison report. 138 tests.

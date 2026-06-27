@@ -39,7 +39,7 @@ dependencies = [
 models = ["redback>=1.12"]    # physical transient models + priors (also pulls bilby, sncosmo, afterglowpy)
 svo = ["astroquery>=0.4.6"]   # SVO Filter Profile Service fallback for unknown bands
 dev = ["pytest", "pytest-cov", "build", "astroquery>=0.4.6"]
-sbi = ["sbi", "torch"]        # Milestone 2
+sbi = ["sbi", "torch"]        # SNPE / NPE sampler (whisper_labia.samplers.snpe)
 abc = ["pyabc"]               # Milestone 2
 
 [project.urls]
@@ -52,3 +52,6 @@ include = ["whisper_labia*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: slow tests (e.g. SNPE neural-net training); deselect with -m 'not slow'",
+]

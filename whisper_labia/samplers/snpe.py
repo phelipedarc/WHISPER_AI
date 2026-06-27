@@ -1,0 +1,216 @@
+"""Sequential Neural Posterior Estimation (SNPE / NPE) via ``sbi``.
+
+Simulation-based inference: instead of an explicit likelihood, SNPE trains a neural density estimator
+``q(theta | x)`` on (parameters, simulated light curve) pairs drawn from the prior, then conditions it
+on the **observed** light curve to get the posterior. Running it over several *rounds* (each proposing
+from the latest posterior) focuses simulations on the good region — the "Sequential" in SNPE.
+
+How it plugs into Whisper:
+
+* **Simulator** = Whisper's forward model. For a parameter vector it calls ``model.predict`` at the
+  observed times/bands, maps the prediction into the data space (flux or magnitude, like
+  :class:`~whisper_labia.likelihood.GaussianLikelihood`), and adds Gaussian noise with the per-point
+  data error — so the implicit likelihood matches Whisper's Gaussian likelihood.
+* **Prior** = Whisper's :class:`~whisper_labia.priors.Prior`, adapted to a torch prior (``Uniform`` →
+  ``BoxUniform``; mixed ``Uniform``/``LogUniform`` → ``MultipleIndependent``).
+* **Result** = the same :class:`~whisper_labia.samplers.SamplerResult` every other sampler returns,
+  with exact Gaussian ``max_log_likelihood`` / ``AIC`` / ``BIC`` evaluated at the best posterior draw.
+  The trained sbi posterior is attached as ``result.posterior`` (and ``result.posteriors`` per round)
+  for resampling / sbi ``pairplot``.
+
+``sbi`` + ``torch`` are the optional ``[sbi]`` extra; they are imported lazily, so importing Whisper
+never requires them. ``num_rounds=1`` gives amortized NPE; ``num_rounds>1`` is sequential SNPE.
+"""
+from __future__ import annotations
+
+import time
+from types import SimpleNamespace
+
+import numpy as np
+import pandas as pd
+
+from ..models import get_model
+from .base import BaseSampler, SamplerResult, summarize_posterior
+
+
+def _require_sbi():
+    """Lazily import sbi/torch; raise a clear, actionable error if the ``[sbi]`` extra is missing."""
+    try:
+        import torch
+        from sbi.inference import NPE, simulate_for_sbi
+        from sbi.utils import BoxUniform, MultipleIndependent
+        from sbi.utils.user_input_checks import (
+            check_sbi_inputs,
+            process_prior,
+            process_simulator,
+        )
+    except Exception as exc:  # pragma: no cover - exercised only without the extra installed
+        raise ImportError(
+            "SNPE needs the optional 'sbi' + 'torch' dependencies (the `[sbi]` extra). Install with "
+            "`pip install 'whisper-labia[sbi]'` (or `pip install sbi torch`).") from exc
+    return SimpleNamespace(
+        torch=torch, NPE=NPE, simulate_for_sbi=simulate_for_sbi, BoxUniform=BoxUniform,
+        MultipleIndependent=MultipleIndependent, process_prior=process_prior,
+        process_simulator=process_simulator, check_sbi_inputs=check_sbi_inputs)
+
+
+def _to_torch_prior(prior, sb):
+    """Adapt a Whisper :class:`Prior` to a torch prior sbi can use.
+
+    All-``Uniform`` priors become a single ``BoxUniform`` (fast); a mix that includes ``LogUniform``
+    becomes a ``MultipleIndependent`` of per-parameter 1-D distributions (``LogUniform`` = exp of a
+    uniform in log-space). Unsupported distribution types raise a clear error.
+    """
+    from ..priors import LogUniform, Uniform
+
+    torch = sb.torch
+    lows, highs, comps, all_uniform = [], [], [], True
+    for name in prior.names:
+        d = prior.distributions[name]
+        if isinstance(d, Uniform):
+            lows.append(float(d.low))
+            highs.append(float(d.high))
+            comps.append(torch.distributions.Uniform(
+                torch.tensor([float(d.low)]), torch.tensor([float(d.high)])))
+        elif isinstance(d, LogUniform):
+            all_uniform = False
+            base = torch.distributions.Uniform(
+                torch.tensor([float(np.log(d.low))]), torch.tensor([float(np.log(d.high))]))
+            comps.append(torch.distributions.TransformedDistribution(
+                base, torch.distributions.ExpTransform()))
+        else:
+            raise TypeError(
+                f"SNPE prior adapter supports Uniform/LogUniform; got {type(d).__name__} for "
+                f"parameter {name!r}. Provide a Uniform/LogUniform prior or extend _to_torch_prior.")
+    if all_uniform:
+        return sb.BoxUniform(low=torch.tensor(lows), high=torch.tensor(highs))
+    return sb.MultipleIndependent(comps)
+
+
+def _build_simulator(predict, names, times, bands, model_in_space, sigma, torch, seed):
+    """A batched sbi simulator: parameter vector(s) -> noisy light curve in the data space."""
+    n_obs = len(times)
+    sig = np.asarray(sigma, dtype=float)
+    sig = np.where(np.isfinite(sig) & (sig > 0), sig, 1.0)   # guard degenerate/zero errors
+    noise_rng = np.random.default_rng(seed)
+
+    def simulator(theta):
+        th = np.asarray(theta.detach().cpu().numpy(), dtype=float)
+        single = th.ndim == 1
+        if single:
+            th = th[None, :]
+        out = np.empty((th.shape[0], n_obs), dtype=float)
+        for i in range(th.shape[0]):
+            params = {nm: float(th[i, j]) for j, nm in enumerate(names)}
+            model_flux = np.asarray(predict(params, times, bands), dtype=float)
+            out[i] = model_in_space(model_flux)
+        out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)   # keep training finite
+        out = out + noise_rng.normal(0.0, sig, size=out.shape)
+        res = torch.as_tensor(out, dtype=torch.float32)
+        return res[0] if single else res
+
+    return simulator
+
+
+class SNPESampler(BaseSampler):
+    """Sequential Neural Posterior Estimation (sbi ``NPE``). See the module docstring."""
+
+    name = "snpe"
+
+    def fit(self, lc, model, prior=None, *, num_rounds=2, num_simulations=1000, space="auto",
+            density_estimator="maf", num_samples=10000, device="cpu", seed=0,
+            show_progress=False, num_workers=1, max_logl_scan=2000, **train_kwargs):
+        """Fit ``lc`` with ``model`` via SNPE/NPE.
+
+        ``num_rounds=1`` is amortized NPE; ``num_rounds>1`` focuses simulations sequentially.
+        ``num_simulations`` is *per round*. ``space`` ('auto'|'flux'|'magnitude') sets the data space
+        for the simulator and the Gaussian noise model (errors required). ``density_estimator`` is any
+        sbi estimator ('maf', 'nsf', 'mdn', ...). Extra keyword args pass through to ``NPE.train``
+        (e.g. ``max_num_epochs``, ``training_batch_size``). The trained posterior is attached as
+        ``result.posterior``.
+        """
+        sb = _require_sbi()
+        torch = sb.torch
+        model = get_model(model)
+        prior = prior if prior is not None else model.default_prior
+        if prior is None:
+            raise ValueError(f"No prior available for model {model.name!r}; pass prior=...")
+
+        # Reuse the Gaussian likelihood for the data space, observation, errors, and exact metrics.
+        from ..likelihood import GaussianLikelihood
+        lik = GaussianLikelihood(lc, space=space)
+
+        times = np.asarray(lc.time, dtype=float)
+        bands = np.asarray(lc.band)
+        predict = model.predict
+        param_names = list(prior.names)
+        k, n = len(param_names), int(len(times))
+
+        torch.manual_seed(int(seed))
+        torch_prior = _to_torch_prior(prior, sb)
+        torch_prior, _, prior_returns_numpy = sb.process_prior(torch_prior)
+        simulator = _build_simulator(
+            predict, param_names, times, bands, lik.model_in_space, lik.sigma, torch, seed)
+        simulator = sb.process_simulator(simulator, torch_prior, prior_returns_numpy)
+        sb.check_sbi_inputs(simulator, torch_prior)
+
+        x_o = torch.as_tensor(np.asarray(lik.y, dtype=float), dtype=torch.float32)
+        inference = sb.NPE(prior=torch_prior, density_estimator=density_estimator,
+                           device=device, show_progress_bars=show_progress)
+
+        t0 = time.perf_counter()
+        proposal = torch_prior
+        posteriors = []
+        for r in range(int(num_rounds)):
+            theta, x = sb.simulate_for_sbi(
+                simulator, proposal, num_simulations=int(num_simulations),
+                num_workers=num_workers, seed=int(seed) + r, show_progress_bar=show_progress)
+            density_estimator_net = inference.append_simulations(
+                theta, x, proposal=proposal, exclude_invalid_x=True).train(
+                show_train_summary=False, **train_kwargs)
+            posterior = inference.build_posterior(density_estimator_net)
+            posteriors.append(posterior)
+            proposal = posterior.set_default_x(x_o)
+        runtime = time.perf_counter() - t0
+
+        samples_np = np.asarray(
+            posterior.sample((int(num_samples),), x=x_o, show_progress_bars=show_progress)
+            .detach().cpu().numpy(), dtype=float)
+        samples = pd.DataFrame(samples_np, columns=param_names)
+
+        # Exact Gaussian metrics at the best (max-likelihood) posterior draw.
+        scan = samples_np if len(samples_np) <= max_logl_scan else samples_np[:max_logl_scan]
+        logls = np.array([
+            lik.log_likelihood(predict({nm: float(v) for nm, v in zip(param_names, row)}, times, bands))
+            for row in scan], dtype=float)
+        best_idx = int(np.nanargmax(logls))
+        best_params = {nm: float(scan[best_idx][j]) for j, nm in enumerate(param_names)}
+        max_log_likelihood = float(logls[best_idx])
+
+        info = {
+            "num_rounds": int(num_rounds), "num_simulations": int(num_simulations),
+            "total_simulations": int(num_rounds) * int(num_simulations),
+            "density_estimator": str(density_estimator), "space": lik.space,
+            "num_samples": int(num_samples), "device": str(device), "seed": int(seed),
+            "num_workers": int(num_workers),
+        }
+        result = SamplerResult(
+            sampler="snpe", model=model.name, parameters=list(param_names), samples=samples,
+            summary=summarize_posterior(samples, param_names), best_params=best_params,
+            n_data=n, n_params=k, runtime_s=runtime, info=info,
+            max_log_likelihood=max_log_likelihood,
+            aic=float(-2.0 * max_log_likelihood + 2 * k),
+            bic=float(-2.0 * max_log_likelihood + k * np.log(n)),
+        )
+        # Attach the trained sbi objects for resampling / pairplot (not part of to_json).
+        result.posterior = posterior
+        result.posteriors = posteriors
+        return result
+
+
+def fit_SNPE(lc, model="flare", prior=None, **kwargs):
+    """Fit ``lc`` with ``model`` via Sequential Neural Posterior Estimation.
+
+    See :meth:`SNPESampler.fit` for options. Requires the optional ``[sbi]`` extra (sbi + torch).
+    """
+    return SNPESampler().fit(lc, model, prior=prior, **kwargs)

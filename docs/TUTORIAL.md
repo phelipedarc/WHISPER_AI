@@ -171,8 +171,8 @@ wp.plot_light_curve(ztf, layout="report")
 Whisper has two pluggable axes — **models** and **samplers**:
 
 ```python
-wp.list_models()     # ['flare']  (+ your own via register_model)
-wp.list_samplers()   # ['abc']    (+ your own via register_sampler)
+wp.list_models()     # ['bazin', 'flare', 'gaussian_rise']  (+ your own via register_model)
+wp.list_samplers()   # ['abc', 'abc_smc', 'npe', 'snpe']     (+ your own via register_sampler)
 ```
 
 The built-in **flare** model is `flux = A·(1 − e^(−t/t_rise))·e^(−t/t_decay)`. Fit it to AT2017GFO's
@@ -255,6 +255,39 @@ lik = GaussianLikelihoodWithUpperLimits(lc, space="flux")    # use non-detection
 
 (Implemented and tested; wiring them into the samplers — `fit_ABC(..., space=..., likelihood=...)` —
 is the next step.)
+
+### Neural posterior estimation (SNPE)
+
+Whisper also ships **Sequential Neural Posterior Estimation** (`snpe` / `npe`), a simulation-based
+inference method powered by [`sbi`](https://sbi-dev.github.io/sbi/). Instead of an explicit likelihood,
+it trains a neural density estimator on `(parameters, simulated light curve)` pairs and conditions it on
+your data. The same model + prior + `LightCurve` you use everywhere else just work:
+
+```python
+res = wp.fit_SNPE(r, "flare", prior=prior,
+                  num_rounds=2,            # 1 = amortized NPE; >1 = sequential SNPE
+                  num_simulations=2000,    # per round
+                  space="auto")            # 'flux' | 'magnitude' | 'auto', like the likelihoods
+print(res)                                  # SamplerResult(sampler='snpe', ..., AIC=..., runtime=...s)
+res.summary["amplitude"]                    # median / ci16 / ci84, same as every sampler
+res.best_params; res.aic; res.bic           # exact Gaussian AIC/BIC at the best posterior draw
+res.to_json("snpe_fit.json")
+```
+
+The simulator is Whisper's forward model (`model.predict` at the observed times/bands) with Gaussian
+noise matching the data errors — so SNPE's implicit likelihood agrees with `GaussianLikelihood`. The
+trained sbi posterior is attached for resampling or an sbi corner plot:
+
+```python
+samples = res.posterior.sample((10000,))    # resample the trained posterior
+from sbi.analysis import pairplot
+pairplot(samples, labels=res.parameters)
+# or use Whisper's own samples DataFrame with corner: corner.corner(res.samples)
+```
+
+> `snpe` needs the optional `[sbi]` extra (`pip install 'whisper-labia[sbi]'`, adds `sbi` + `torch`).
+> A runnable demo is in [`scripts/demo_snpe.py`](../scripts/demo_snpe.py). Training is the slow part —
+> its tests are marked `slow` (`pytest -m "not slow"` skips them).
 
 ## What's next
 

@@ -1,7 +1,7 @@
 """Whisper (``whisper_labia``): easy Bayesian model comparison of transient light curves.
 
 Two axes are pluggable: **models** (``register_model``; built-in + custom) and **samplers**
-(``register_sampler``; ABC now, MCMC/Dynesty/SNPE coming). The data ingestion, samplers, likelihoods,
+(``register_sampler``; ABC, ABC-SMC and SNPE now, MCMC/Dynesty coming). The data ingestion, samplers, likelihoods,
 plots and outputs are Whisper's own and run standalone. Physical models + priors can optionally be
 supplied by the external redback package (the ``[models]`` extra), which Whisper uses only as a source
 of models and priors.
@@ -35,6 +35,7 @@ from .samplers import (
     fit,
     fit_ABC,
     fit_ABC_SMC,
+    fit_SNPE,
     list_samplers,
     register_sampler,
 )
@@ -52,5 +53,5 @@ __all__ = [
     "GaussianLikelihood", "GaussianLikelihoodWithUpperLimits", "MixtureGaussianLikelihood",
     "make_likelihood",
     # samplers
-    "fit_ABC", "fit_ABC_SMC", "fit", "SamplerResult", "register_sampler", "list_samplers",
+    "fit_ABC", "fit_ABC_SMC", "fit_SNPE", "fit", "SamplerResult", "register_sampler", "list_samplers",
 ]
