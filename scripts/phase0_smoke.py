@@ -1,6 +1,7 @@
 """Phase-0 smoke test (run inside the ``whisper_dev`` container).
 
-Validates the two redback touch-points Whisper relies on, plus the beta samplers:
+Validates the two touch-points Whisper uses *when the optional redback `[models]` extra is installed*
+(redback is an auxiliary source of models + priors only), plus the beta samplers:
 
   1. redback model callable: parameters -> predicted observables
   2. ``redback.priors.get_priors`` -> bilby ``PriorDict``

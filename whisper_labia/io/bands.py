@@ -73,6 +73,116 @@ FILTER_LOOKUP = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Effective-wavelength + zero-point table for each FILTER_LOOKUP group.
+#
+# Per the spec, the OPTICAL effective bands are anchored to the LSST ugrizy filters (zero point in
+# the AB system == 3631 Jy by definition; the effective wavelengths come from the LSST throughputs).
+# The NIR groups (J/H/K) and the JWST sim bands have no LSST equivalent, so they carry documented
+# 2MASS / JWST effective wavelengths -- still on the AB zero point Whisper uses internally. ``source``
+# records the provenance so callers can tell an LSST anchor from a documented NIR value.
+# ---------------------------------------------------------------------------
+_AB_ZP_JY = 3631.0  # AB zero point (== whisper_labia.io.photometry.AB_ZEROPOINT_JY)
+
+LSST_BAND_INFO = {
+    # optical -- LSST ugrizy anchors (lambda_eff in Angstrom)
+    "U-band": {"lambda_eff": 3671.0, "zero_point": _AB_ZP_JY, "filter_id": "LSST/LSST.u", "source": "lsst"},
+    "g-band": {"lambda_eff": 4866.0, "zero_point": _AB_ZP_JY, "filter_id": "LSST/LSST.g", "source": "lsst"},
+    "r-band": {"lambda_eff": 6215.0, "zero_point": _AB_ZP_JY, "filter_id": "LSST/LSST.r", "source": "lsst"},
+    "i-band": {"lambda_eff": 7545.0, "zero_point": _AB_ZP_JY, "filter_id": "LSST/LSST.i", "source": "lsst"},
+    # the FILTER_LOOKUP 'z-band' group folds in LSST y as well; anchored on LSST z.
+    "z-band": {"lambda_eff": 8679.0, "zero_point": _AB_ZP_JY, "filter_id": "LSST/LSST.z", "source": "lsst"},
+    # NIR -- documented 2MASS effective wavelengths (AB zero point as used internally)
+    "J-band": {"lambda_eff": 12350.0, "zero_point": _AB_ZP_JY, "filter_id": "2MASS/2MASS.J", "source": "documented"},
+    "H-band": {"lambda_eff": 16620.0, "zero_point": _AB_ZP_JY, "filter_id": "2MASS/2MASS.H", "source": "documented"},
+    "K-band": {"lambda_eff": 21590.0, "zero_point": _AB_ZP_JY, "filter_id": "2MASS/2MASS.Ks", "source": "documented"},
+    # JWST NIRCam sim bands -- documented effective wavelengths
+    "F356W-band": {"lambda_eff": 35690.0, "zero_point": _AB_ZP_JY, "filter_id": "JWST/NIRCam.F356W", "source": "documented"},
+    "F444W-band": {"lambda_eff": 44040.0, "zero_point": _AB_ZP_JY, "filter_id": "JWST/NIRCam.F444W", "source": "documented"},
+}
+
+
+def resolve_band(band, *, lookup=None, svo_fallback=True, lambda_eff_hint=None, warn=True):
+    """Resolve one band to ``{group, lambda_eff (AA), zero_point (Jy), filter_id, source}``.
+
+    Resolution order:
+
+    1. group ``band`` via ``lookup`` (default :data:`FILTER_LOOKUP`); if the resulting group (or the
+       band itself) is in :data:`LSST_BAND_INFO`, return that anchored wavelength + zero point;
+    2. otherwise the band has no local match -- emit a clear warning naming it and, if
+       ``svo_fallback`` is on, query the SVO Filter Profile Service
+       (:func:`whisper_labia.io.svo.resolve_band_svo`);
+    3. if SVO is unavailable / unknown, warn and return ``lambda_eff=zero_point=None`` (the load
+       still succeeds; the user can supply values via ``svo.register_manual_band``).
+
+    ``source`` is one of ``'lsst'`` / ``'documented'`` / ``'svo'`` / ``'manual'`` / ``'unresolved'``.
+    """
+    from . import svo as _svo  # local import keeps astroquery fully optional
+
+    lookup = FILTER_LOOKUP if lookup is None else lookup
+    raw = str(band).strip()
+    group = lookup.get(raw, raw)
+
+    info = LSST_BAND_INFO.get(group) or LSST_BAND_INFO.get(raw)
+    if info is not None:
+        return {"group": group, "lambda_eff": info["lambda_eff"],
+                "zero_point": info["zero_point"], "filter_id": info["filter_id"],
+                "source": info["source"]}
+
+    # A manual override takes precedence and is not a "miss" worth warning about.
+    if raw in _svo._MANUAL_BANDS:
+        res = _svo.resolve_band_svo(raw, lambda_eff_hint=lambda_eff_hint)
+        return {"group": group, "lambda_eff": res["lambda_eff"],
+                "zero_point": res["zero_point"], "filter_id": res["filter_id"],
+                "source": res["source"]}
+
+    # No local match.
+    if raw not in lookup:
+        if warn:
+            warnings.warn(
+                f"Band {raw!r} is not in FILTER_LOOKUP; attempting SVO fallback."
+                if svo_fallback else
+                f"Band {raw!r} is not in FILTER_LOOKUP and SVO fallback is disabled.",
+                stacklevel=2)
+    if svo_fallback:
+        try:
+            res = _svo.resolve_band_svo(raw, lambda_eff_hint=lambda_eff_hint)
+            return {"group": group, "lambda_eff": res["lambda_eff"],
+                    "zero_point": res["zero_point"], "filter_id": res["filter_id"],
+                    "source": res["source"]}
+        except _svo.SvoUnavailable as exc:
+            if warn:
+                warnings.warn(
+                    f"Could not resolve band {raw!r} via SVO ({exc}). Effective wavelength / zero "
+                    f"point are unknown; supply them with "
+                    f"whisper_labia.io.svo.register_manual_band({raw!r}, lambda_eff, zero_point).",
+                    stacklevel=2)
+    return {"group": group, "lambda_eff": None, "zero_point": None,
+            "filter_id": None, "source": "unresolved"}
+
+
+def resolve_bands(bands, *, lookup=None, svo_fallback=True, warn=True):
+    """Vectorized :func:`resolve_band`.
+
+    Returns ``(lambda_eff, zero_point, info)`` where the first two are ``float`` ``ndarray`` (NaN
+    where unresolved) aligned with ``bands``, and ``info`` maps each distinct raw band to its full
+    resolution dict. Each distinct band is resolved once (so SVO/network is hit at most once per
+    band, then cached).
+    """
+    info = {}
+    for b in bands:
+        key = str(b).strip()
+        if key not in info:
+            info[key] = resolve_band(key, lookup=lookup, svo_fallback=svo_fallback, warn=warn)
+    lam = np.array([info[str(b).strip()]["lambda_eff"]
+                    if info[str(b).strip()]["lambda_eff"] is not None else np.nan
+                    for b in bands], dtype=float)
+    zp = np.array([info[str(b).strip()]["zero_point"]
+                   if info[str(b).strip()]["zero_point"] is not None else np.nan
+                   for b in bands], dtype=float)
+    return lam, zp, info
+
+
 def normalize_band(band, aliases=None, warn_unknown=False, known=None):
     """Normalize a single band label (trim whitespace, apply exact-match alias map)."""
     table = DEFAULT_BAND_ALIASES if aliases is None else {**DEFAULT_BAND_ALIASES, **aliases}

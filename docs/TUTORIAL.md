@@ -28,9 +28,11 @@ obviously bad rows (non-finite values, non-positive errors).
 ```python
 lc.n_points              # 645
 lc.bands                 # sorted unique band labels
-lc.data_mode             # 'magnitude' or 'flux_density'
+lc.data_mode             # 'flux_density' | 'magnitude' | 'flux'  (stored attribute)
+lc.output_format         # forward-model comparison space: 'magnitude' | 'flux_density'
+lc.redshift_known        # True/False — False means a redshift prior must be sampled
 lc.snr                   # per-point signal-to-noise (computed from the errors)
-lc.to_dataframe().head() # a pandas view (includes an 'snr' column)
+lc()                     # the ENRICHED dataframe (both flux & magnitude); == lc.to_dataframe()
 ```
 
 ## 3. Clean & shape — chainable, each call returns a **new** `LightCurve`
@@ -65,11 +67,75 @@ wp.load_lightcurve("tests/data/at2017gfo.csv", min_snr=5).n_points   # 578
 ## 4. Convert magnitude ↔ flux
 
 ```python
-lc.add_flux()    # AB magnitudes -> flux density (Jy), with error propagation
+lc.add_flux()      # AB magnitudes -> flux density (Jy), with error propagation
 flux_lc.add_mag()  # flux -> AB magnitudes
 ```
 
-## 5. Plot
+`add_flux`/`add_mag` use the constant **AB 3631 Jy** zero point (so the modelling flux the samplers see
+stays on one zero point). For the **per-band** physical conversion (LSST/SVO zero points) just call the
+curve — `lc()` returns a dataframe with both columns filled in (see §5).
+
+## 5. Data mode, redshift, units & band resolution
+
+These four are wired into `load_lightcurve` and the `LightCurve` itself.
+
+### Data mode and the enriched dataframe
+`data_mode` is `flux_density` (canonical unit Jy, default), `magnitude` (dimensionless AB), or `flux`
+(band-integrated erg/s/cm²). It is inferred from the columns but you can set it explicitly. **Calling**
+the curve returns the enriched dataframe — the missing one of flux/magnitude is derived from each band's
+zero point:
+
+```python
+df = lc()                # both 'flux' and 'magnitude' columns (+ lambda_eff, zero_point, snr)
+lc.output_format         # 'flux_density' / 'magnitude' — the forward-model comparison space
+```
+
+### Redshift — argument > column > unknown (never silently assumed)
+```python
+wp.load_lightcurve("sn.csv", redshift=0.034)        # explicit
+wp.load_lightcurve("sn.csv")                        # a 'redshift' column is picked up automatically
+```
+If neither is present the load **does not fail** — the curve is flagged `redshift_known=False`, carries a
+default `redshift_prior` you can override, and warns that *z will be sampled, not assumed*. Validation:
+`z ≥ 0`; `z == 0` needs an explicit `luminosity_distance=` (Mpc); negative/NaN is a hard error.
+
+```python
+lc.redshift_known        # False
+lc.redshift_prior        # {'type': 'Uniform', 'low': 0.001, 'high': 1.0, 'name': 'redshift'}
+wp.load_lightcurve("z0.csv", redshift=0.0, luminosity_distance=40.0)   # z=0 case
+```
+
+### Units (astropy) — F_ν or F_λ in, canonical Jy out
+Flux density may arrive as **F_ν** (Jy/mJy/µJy) or **F_λ** (erg/s/cm²/Å). Pass the unit and Whisper
+stores Jy internally; the F_λ→F_ν conversion uses each band's effective wavelength
+(`u.spectral_density`):
+
+```python
+wp.load_lightcurve("fnu.csv",  flux_unit="mJy")                  # F_nu
+wp.load_lightcurve("flam.csv", flux_unit="erg/(s cm2 AA)")       # F_lambda -> Jy via band wavelength
+```
+Magnitudes must be dimensionless AB (a flux unit on a magnitude column is a clear error). A flux column
+with **no** unit warns and assumes the documented default (Jy) — pass `flux_unit=` to silence it.
+
+### Bands — FILTER_LOOKUP, then SVO fallback
+Each band resolves to an effective wavelength + zero point. Known filters come from `FILTER_LOOKUP`
+(optical bands anchored to LSST ugrizy); an unknown band warns and falls back to the **SVO Filter
+Profile Service**:
+
+```python
+wp.resolve_band("g")                 # {'source':'lsst', 'lambda_eff':4866.0, 'zero_point':3631.0, ...}
+wp.resolve_band("PAN-STARRS/PS1.w")  # warns, then queries SVO (cached by filter ID; offline-safe)
+```
+SVO results are cached locally, so re-runs never re-query. If SVO is unavailable (no network /
+astroquery), the load degrades gracefully and you can supply the band by hand:
+
+```python
+wp.register_manual_band("my_filter", lambda_eff=9000.0, zero_point=3631.0)
+```
+> SVO needs the optional `[svo]` extra (`pip install 'whisper-labia[svo]'`, which adds `astroquery`).
+> A runnable, **offline** tour of all four features is in [`scripts/demo_ingestion.py`](../scripts/demo_ingestion.py).
+
+## 6. Plot
 
 ### Report (overview): apparent magnitude **and** flux, all bands overlaid
 ```python
@@ -100,7 +166,7 @@ wp.plot_light_curve(ztf, layout="report")
 
 ---
 
-## 6. Fit a model with ABC
+## 7. Fit a model with ABC
 
 Whisper has two pluggable axes — **models** and **samplers**:
 
@@ -131,7 +197,7 @@ res.to_json("fit.json")    # AIC, BIC, max-likelihood, posterior summary, diagno
 ![ABC flare fit](figures/at2017gfo_abc_flare_r.png)
 
 The flare model tracks the r-band decline well. (Its reduced χ² is high only because the photometry
-is high-SNR — tiny error bars magnify any model imperfection; physical redback models come later.)
+is high-SNR — tiny error bars magnify any model imperfection; physically-motivated models come later.)
 
 - **Acceptance** is by `quantile` (keep the best fraction — robust default) or a fixed `threshold`.
 - **Metrics:** the χ² distance equals −2 ln L for a Gaussian likelihood, so ABC reports
@@ -146,7 +212,7 @@ Simulations are split across processes (`n_jobs`). On this machine (200k simulat
 | 8 | 1.90 s | 105,000 |
 | 32 | 1.73 s | 115,000 |
 
-(~4× here; for expensive models like redback the speedup scales further.)
+(~4× here; for expensive physical models the speedup scales further.)
 
 ### Bring your own model / distance
 ```python
@@ -193,4 +259,5 @@ is the next step.)
 ## What's next
 
 Next: wire likelihoods into the samplers (flux/magnitude space + upper limits in inference), then a
-**likelihood-based sampler** (MCMC / Dynesty), then **redback** physical models via the `[models]` extra.
+**likelihood-based sampler** (MCMC / Dynesty). Physical models + priors can optionally be plugged in
+from the external redback package (the `[models]` extra) — an auxiliary source of models and priors only.

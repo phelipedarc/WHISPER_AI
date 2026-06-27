@@ -1,9 +1,9 @@
 """Magnitude <-> flux-density conversions (AB system).
 
 Flux densities are in janskys (Jy); the AB zeropoint is 3631 Jy, i.e.
-``m_AB = -2.5 * log10(f_nu / 3631 Jy)``. redback's ``flux_density`` output is in mJy
-(1 Jy = 1e3 mJy); the Phase-2 forward model reconciles units. For Phase-1 ingestion we only
-need internally consistent, invertible conversions with correct error propagation.
+``m_AB = -2.5 * log10(f_nu / 3631 Jy)``. (An optional physical-model backend such as redback emits
+``flux_density`` in mJy, 1 Jy = 1e3 mJy; the Phase-2 forward model reconciles units.) For ingestion we
+only need internally consistent, invertible conversions with correct error propagation.
 """
 from __future__ import annotations
 

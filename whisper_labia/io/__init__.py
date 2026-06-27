@@ -1,10 +1,14 @@
-"""Data ingestion: canonical light-curve container, CSV loader, band/photometry helpers."""
+"""Data ingestion: canonical light-curve container, CSV loader, band/photometry/unit helpers."""
+from . import svo
 from .bands import (
     DEFAULT_BAND_ALIASES,
     FILTER_LOOKUP,
+    LSST_BAND_INFO,
     group_bands,
     normalize_band,
     normalize_bands,
+    resolve_band,
+    resolve_bands,
     unmapped_bands,
 )
 from .loader import load_lightcurve
@@ -14,19 +18,37 @@ from .photometry import (
     mag_err_to_snr,
     mag_to_flux_density,
 )
-from .schema import LightCurve
+from .schema import VALID_DATA_MODES, LightCurve
+from .svo import (
+    SvoUnavailable,
+    get_transmission_data,
+    register_manual_band,
+    resolve_band_svo,
+)
+from .units import to_canonical
 
 __all__ = [
     "LightCurve",
+    "VALID_DATA_MODES",
     "load_lightcurve",
     "normalize_band",
     "normalize_bands",
     "group_bands",
+    "resolve_band",
+    "resolve_bands",
     "unmapped_bands",
     "DEFAULT_BAND_ALIASES",
     "FILTER_LOOKUP",
+    "LSST_BAND_INFO",
     "mag_to_flux_density",
     "flux_density_to_mag",
     "mag_err_to_snr",
     "AB_ZEROPOINT_JY",
+    "to_canonical",
+    # SVO fallback
+    "svo",
+    "SvoUnavailable",
+    "register_manual_band",
+    "resolve_band_svo",
+    "get_transmission_data",
 ]

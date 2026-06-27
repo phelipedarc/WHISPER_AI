@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "whisper-labia"
 version = "0.0.1.dev0"
-description = "Whisper: easy Bayesian model comparison of astronomical transient light curves, powered by redback models and priors."
+description = "Whisper: easy, extensible Bayesian model comparison of astronomical transient light curves."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "Phelipe Darc", email = "phelipedarc@gmail.com" }]
-keywords = ["astronomy", "transients", "bayesian", "mcmc", "nested-sampling", "redback", "supernova", "kilonova", "tde"]
+keywords = ["astronomy", "transients", "bayesian", "mcmc", "nested-sampling", "supernova", "kilonova", "tde"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
@@ -37,7 +37,8 @@ dependencies = [
 
 [project.optional-dependencies]
 models = ["redback>=1.12"]    # physical transient models + priors (also pulls bilby, sncosmo, afterglowpy)
-dev = ["pytest", "pytest-cov", "build"]
+svo = ["astroquery>=0.4.6"]   # SVO Filter Profile Service fallback for unknown bands
+dev = ["pytest", "pytest-cov", "build", "astroquery>=0.4.6"]
 sbi = ["sbi", "torch"]        # Milestone 2
 abc = ["pyabc"]               # Milestone 2
 

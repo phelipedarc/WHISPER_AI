@@ -3,12 +3,16 @@
 **Easy Bayesian model comparison of astronomical transient light curves.**
 
 Give Whisper a light-curve CSV; it will tell you **which transient model best fits** and return the
-**posteriors + model-selection metrics** (AIC, BIC, evidence, max-likelihood) for each model. It uses
-[redback](https://github.com/nikhil-sarin/redback) for the physical *models* and *priors*; the data
-handling, samplers, plots and outputs are Whisper's own — built to be **simple and extensible**.
+**posteriors + model-selection metrics** (AIC, BIC, evidence, max-likelihood) for each model.
+Everything — data ingestion, samplers, likelihoods, plots and outputs — is **Whisper's own and runs
+standalone**, built to be **simple and extensible**. Physical transient models and their priors are
+pluggable: you can register your own, or optionally pull them from the external
+[redback](https://github.com/nikhil-sarin/redback) package via the `[models]` extra. redback is an
+auxiliary dependency used *only* as a source of models and priors — Whisper does not otherwise rely on it.
 
-> **Status:** early development. **Phase 1 — data ingestion + plotting — is done and tested
-> (44 unit tests).** The samplers (MCMC, Dynesty, …) come next.
+> **Status:** early development. Data ingestion (with astropy units, redshift handling, and SVO band
+> resolution), plotting, and the ABC / ABC-SMC samplers are done and tested (**133 unit tests**).
+> Likelihood-based samplers (MCMC, Dynesty) come next.
 
 ## Install
 
@@ -68,4 +72,4 @@ wp.plot_light_curve(lc, layout="report")     # apparent-mag + flux overview, all
 
 ## License
 
-GPLv3 (inherited from the redback dependency).
+GPLv3 — chosen to stay compatible with the optional redback `[models]` extra.

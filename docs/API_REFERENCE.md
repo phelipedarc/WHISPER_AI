@@ -4,7 +4,7 @@ Generated for **v0.0.1.dev0**. Covers **Phase 1 (data ingestion + plotting)** an
 layer** (pluggable models, priors, distance, samplers).
 
 - **Environment:** Docker container `phe_sbi`, Python 3.11.
-- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (81 tests).
+- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (133 tests).
 
 ## Package map
 
@@ -17,11 +17,12 @@ whisper_labia/
   likelihood.py        # GaussianLikelihood, ...WithUpperLimits, Mixture..., make_likelihood
   models/              # Model + register/get/list + built-ins flare/bazin/gaussian_rise
   samplers/            # BaseSampler, SamplerResult, ABCSampler, ABCSMCSampler, fit_ABC(_SMC), fit
-  io/                  # LightCurve, load_lightcurve, bands, photometry
+  io/                  # LightCurve, load_lightcurve, bands, photometry, units, svo
 ```
 
 Top-level (`import whisper_labia as wp`): `LightCurve`, `load_lightcurve`, `plot_light_curve`,
-`group_bands`, `FILTER_LOOKUP`, `Prior`, `Uniform`, `LogUniform`, `Model`, `register_model`,
+`group_bands`, `FILTER_LOOKUP`, `resolve_band`, `resolve_bands`, `LSST_BAND_INFO`,
+`register_manual_band`, `SvoUnavailable`, `Prior`, `Uniform`, `LogUniform`, `Model`, `register_model`,
 `get_model`, `list_models`, `chi2_distance`, `GaussianLikelihood`, `GaussianLikelihoodWithUpperLimits`,
 `MixtureGaussianLikelihood`, `make_likelihood`, `fit_ABC`, `fit_ABC_SMC`, `fit`, `SamplerResult`,
 `register_sampler`, `list_samplers`.
@@ -31,14 +32,25 @@ Top-level (`import whisper_labia as wp`): `LightCurve`, `load_lightcurve`, `plot
 ## 1. `LightCurve`  (`io.schema`)
 
 Constructor fields: `time`, `band` (required); `magnitude`, `magnitude_err`, `flux`, `flux_err`,
-`upper_limit`, `system` (optional per-point); `name`, `redshift`, `meta` (scalar). Requires `band`
-and at least one of `magnitude`/`flux`.
+`upper_limit`, `system`, `lambda_eff`, `zero_point` (optional per-point); `name`, `redshift`,
+`luminosity_distance`, `data_mode`, `redshift_prior`, `meta` (scalar). Requires `band` and at least one
+of `magnitude`/`flux`. `flux` holds **flux density in Jy** (the canonical internal unit).
 
-Properties: `n_points`, `bands`, `data_mode`, `snr` (`flux/flux_err` or `(2.5/ln10)/mag_err`).
+- **`data_mode`** ∈ `{flux_density, magnitude, flux}` — stored; inferred from the columns when omitted
+  (mag-only → `magnitude`, else `flux_density`). Invalid values raise.
+- **Redshift** is validated in `__post_init__`: finite & `≥ 0`; `z == 0` requires `luminosity_distance`
+  (Mpc); negative/NaN raises. When `redshift is None` the curve is *unknown*: `redshift_known` is
+  `False` and a default `redshift_prior` is attached (the loader emits the one-time warning).
 
-Methods (each returns a new `LightCurve`): `select_bands(bands)`, `select_time_window(time_min,
-time_max)`, `select_snr(min_snr=5.0)`, `add_flux(zeropoint_jy=3631.0)`, `add_mag(...)`,
-`set_explosion_date(explosion_date)` (time → days since explosion), `to_dataframe()`.
+Properties: `n_points`, `bands`, `data_mode`, `output_format` (the forward-model comparison space,
+`'magnitude'`/`'flux_density'`), `redshift_known`, `snr` (`flux/flux_err` or `(2.5/ln10)/mag_err`).
+
+Methods (each returns a new `LightCurve` unless noted): `select_bands`, `select_time_window`,
+`select_snr(min_snr=5.0)`, `add_flux(zeropoint_jy=3631.0)` / `add_mag(...)` (constant **AB** zero point;
+raise for `data_mode='flux'`), `resolve_bands(svo_fallback=True)` (fill `lambda_eff`/`zero_point`),
+`set_explosion_date`, `to_dataframe()`. **`lc()` (`__call__`)** returns the enriched dataframe: for
+`flux_density`/`magnitude` the missing column is derived from the **per-band** zero point (`lambda_eff`,
+`zero_point` included); band-integrated `flux` keeps only the flux column.
 
 ## 2. `load_lightcurve(path, *, ...)` → `LightCurve`  (`io.loader`)
 
@@ -47,13 +59,48 @@ Auto-maps columns; key options: `column_map`, `band_lookup` (broadband grouping)
 `explosion_date`, `delimiter`. Detects an `upper_limit` column. Raises `ValueError` for a missing
 time / band / measurement column.
 
-## 3. Band utilities  (`io.bands`)
+Ingestion options:
+
+| Argument | Default | Description |
+|---|---|---|
+| `redshift` | `None` | Explicit redshift; otherwise a `redshift` column is used, else unknown (warns). |
+| `luminosity_distance` | `None` | Mpc; required when `redshift == 0`. |
+| `data_mode` | `None` | `flux_density`/`magnitude`/`flux`; inferred from the columns when omitted. |
+| `flux_unit` | `None` | astropy unit of the flux column — F_ν (Jy/mJy/µJy) or F_λ (erg/s/cm²/Å). `None` → warn + assume Jy. |
+| `magnitude_unit` | `None` | Must be dimensionless AB; a flux unit raises. `None` → warn + assume dimensionless. |
+| `resolve_band_info` | `True` | Fill per-point `lambda_eff` + `zero_point` from the bands. |
+| `svo_fallback` | `True` | Query SVO for bands missing from `FILTER_LOOKUP`. |
+
+## 3. Bands & SVO resolution  (`io.bands`, `io.svo`)
 `normalize_band(s)`, `group_bands(bands, lookup=FILTER_LOOKUP)`, `unmapped_bands`, plus
 `DEFAULT_BAND_ALIASES` and `FILTER_LOOKUP` (88 labels → 10 effective bands).
 
-## 4. Photometry  (`io.photometry`)
+- **`resolve_band(band, *, lookup=None, svo_fallback=True, lambda_eff_hint=None, warn=True)`** →
+  `{group, lambda_eff (Å), zero_point (Jy), filter_id, source}`. Order: `FILTER_LOOKUP` group →
+  `LSST_BAND_INFO` (optical anchored to **LSST ugrizy**; NIR documented) → SVO fallback → unresolved
+  (warn). `source` ∈ `{lsst, documented, svo, manual, unresolved}`.
+- **`resolve_bands(bands, *, lookup=None, svo_fallback=True, warn=True)`** → `(lambda_eff, zero_point,
+  info)` arrays (NaN where unresolved); resolves each distinct band once.
+- **`LSST_BAND_INFO`** — effective wavelength + zero point per effective band.
+
+**SVO** (`io.svo`, needs the `[svo]` extra → `astroquery`): `resolve_band_svo(band, *,
+lambda_eff_hint=None)`, `get_filter_metadata(filter_id)` (cached by ID; offline-safe disk cache under
+`$WHISPER_SVO_CACHE`), `get_transmission_data(filter_id)` (Phase-2 spectral integration),
+`find_filter_id`, `register_manual_band(band, lambda_eff, zero_point)`, `clear_cache`. Network failure /
+unknown filter raises `SvoUnavailable`, which `resolve_band` turns into a warning + the manual-override
+path. Corrupt/unusable cache entries are ignored, never crash a load. All network access goes through
+`_svo_fetch_metadata` / `_svo_fetch_index` / `_svo_fetch_transmission` (the points the tests mock).
+
+## 4. Photometry & units  (`io.photometry`, `io.units`)
 `mag_to_flux_density`, `flux_density_to_mag`, `mag_err_to_snr`; `AB_ZEROPOINT_JY=3631.0`,
 `POGSON=2.5/ln10`.
+
+`io.units` stores **one canonical unit per mode**: `flux_density` → Jy, `flux` → erg/s/cm², `magnitude`
+→ dimensionless AB. `to_canonical(values, unit, data_mode, *, lambda_eff=None, warn_default=True)`
+validates + converts; `to_flux_density_jy` accepts F_ν directly and F_λ via `u.spectral_density(λ_eff)`
+(**requires** a per-point wavelength — errors clearly, naming the offending points, when missing or
+NaN); `check_magnitude_unit` rejects a flux unit on a magnitude column. A no-unit column warns and
+applies the documented per-mode default.
 
 ## 5. Plotting — `plot_light_curve(lc, *, layout="report", quantity="apparent_mag", bands=None, ncols=3, figsize=None, title=None, save=None)`
 `layout`: `"report"` (mag + flux panels) or `"grid"` (per band). `quantity`: `apparent_mag` /
@@ -171,15 +218,16 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 - **ABC posteriors are approximate** (broadened by the acceptance ε); tighten ε / use SMC for sharper ones.
 - **Toy models** are band-independent analytic forms: `flare` = 0 before explosion; `bazin` computed
   stably in log-space; `gaussian_rise` has a derivative kink at the peak. Physical, band-dependent
-  models come from redback (optional `[models]` extra).
+  models can optionally be supplied by the external redback `[models]` extra (a models/priors source only).
 - **SNR(magnitude)** uses `(2.5/ln10)/σ_m`, valid for small magnitude errors.
 
 ## 7. Internals
 `io.loader._resolve_columns`, `schema.LightCurve._subset/_copy`, `plotting._categories/_scatter`,
 `samplers.abc._simulate_batch/_worker`, `samplers.base.summarize_posterior`,
-`scripts/{phase0_smoke,demo_abc_at2017gfo}.py`.
+`io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
+(network boundary), `scripts/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (81 tests, all passing)
+## 8. Test coverage (133 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -194,8 +242,13 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 | `test_abc.py` | 6 | parameter recovery, serial+parallel, acceptance count, JSON, dispatch, custom model. |
 | `test_abc_smc.py` | 6 | SMC registration, recovery, epsilon tightening, explicit schedule, dispatch, model-agnostic. |
 | `test_likelihood.py` | 9 | Gaussian flux/mag, space-auto, upper-limit CDF, mixture, make_likelihood, picklable. |
+| `test_units.py` | 12 | F_ν/F_λ→Jy, per-point λ, NaN-λ error, mag rejects flux unit, no-unit default, flux dimensionality. |
+| `test_svo.py` | 15 | FILTER_LOOKUP→SVO, mocked metadata/index, cache hit + disk cache, corrupt-cache (×4 params), graceful degrade, manual override (no spurious warn), transmission, ambiguity. |
+| `test_ingestion.py` | 25 | data_mode/output_format, `__call__`, redshift (arg/column/unknown/0/neg/NaN/all-NaN), units, band-info, subset preservation, backward-compat ZP, flux-mode. |
 
 Fixtures: `tests/data/at2017gfo.csv`, `tests/data/ztf18aarlhfw.csv`. Figures + ABC JSON in `docs/figures/`.
+All SVO/network calls are **mocked** — no live network in CI. See
+[`REPORT_ingestion_upgrade.md`](REPORT_ingestion_upgrade.md) for the full per-test results.
 
 ## 9. End-to-end example
 

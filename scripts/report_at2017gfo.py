@@ -115,10 +115,10 @@ def main():
     L.append("- Read chi2 alongside the **simulations** column. Flat ABC draws every simulation from "
              "the prior (simplest, embarrassingly parallel); ABC-SMC focuses simulations near good "
              "regions over rounds. SMC's value is reaching a tight threshold with *fewer* simulations "
-             "-- decisive when each simulation is expensive (e.g. redback models); for these "
+             "-- decisive when each simulation is expensive (e.g. physical models); for these "
              "microsecond toy models a large flat-ABC budget is already very effective.")
-    L.append("- These are analytic toy models; physically-motivated fits come from redback models via "
-             "the optional `[models]` extra.")
+    L.append("- These are analytic toy models; physically-motivated models + priors can optionally be "
+             "plugged in from the external redback package via the `[models]` extra.")
     REPORT.write_text("\n".join(L))
     print("wrote", REPORT)
 
