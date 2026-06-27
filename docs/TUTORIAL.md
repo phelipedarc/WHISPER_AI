@@ -285,9 +285,31 @@ pairplot(samples, labels=res.parameters)
 # or use Whisper's own samples DataFrame with corner: corner.corner(res.samples)
 ```
 
+**Advanced / flexible options** (for harder, high-dimensional or multi-band problems):
+
+```python
+import torch.nn as nn
+res = wp.fit_SNPE(
+    r, "flare", prior=prior,
+    embedding_net=nn.Sequential(nn.Linear(len(r), 64), nn.ReLU(), nn.Linear(64, 16)),  # learn features from x
+    density_estimator="nsf", hidden_features=64, num_transforms=8,                      # custom architecture
+    proposal_mode="restricted", truncate_quantile=1e-4, support_samples=10_000,         # truncated SNPE (TSNPE)
+    num_workers=8,                                                                       # parallel simulation
+)
+```
+
+- **`embedding_net`** — any `torch.nn.Module` mapping the simulated light curve to features (its input
+  dim must equal the number of light-curve points); essential when the data vector is large.
+- **`density_estimator`** — a name (`'maf'`/`'nsf'`/`'mdn'`) **or** a pre-built `posterior_nn(...)`
+  factory; `hidden_features` / `num_transforms` / `num_bins` tune the built-in architectures.
+- **`proposal_mode='restricted'`** — truncated SNPE (`RestrictedPrior` + `get_density_thresholder`),
+  sometimes more robust than the default SNPE-C. It rejection-samples the restricted prior, so it can be
+  **compute-heavy** — give it enough `num_simulations` and keep `support_samples` modest.
+
 > `snpe` needs the optional `[sbi]` extra (`pip install 'whisper-labia[sbi]'`, adds `sbi` + `torch`).
-> A runnable demo is in [`scripts/demo_snpe.py`](../scripts/demo_snpe.py). Training is the slow part —
-> its tests are marked `slow` (`pytest -m "not slow"` skips them).
+> Runnable: [`scripts/demo_snpe.py`](../scripts/demo_snpe.py) and the notebook
+> [`examples/at2017gfo_quickstart.ipynb`](../examples/at2017gfo_quickstart.ipynb). Training is the slow
+> part — its tests are marked `slow` (`pytest -m "not slow"` skips them).
 
 ## What's next
 

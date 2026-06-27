@@ -58,12 +58,14 @@ wp.plot_light_curve(lc, layout="report")     # apparent-mag + flux overview, all
 - **Convert & derive** — magnitude ↔ flux, per-point **SNR**, set the **explosion date** (day 0).
 - **Plot** — a report (mag + flux) or a per-band grid (apparent / absolute mag, or flux), with clear
   marker conventions (detections = circles, SNR<3 = △, upper limits = ▽).
-- **Fit** — **ABC** and **ABC-SMC** (parallel) with built-in models `flare`, `bazin`,
-  `gaussian_rise` or your own (`register_model`); posteriors + AIC/BIC + JSON. See the
-  [AT2017GFO model-comparison report](docs/REPORT_at2017gfo.md). Models *and* samplers are pluggable.
+- **Fit** — **ABC**, **ABC-SMC** (parallel), and **SNPE/NPE** (Sequential Neural Posterior Estimation
+  via `sbi`) with built-in models `flare`, `bazin`, `gaussian_rise` or your own (`register_model`);
+  posteriors + AIC/BIC + JSON. See the [AT2017GFO model-comparison report](docs/REPORT_at2017gfo.md).
+  Models *and* samplers are pluggable.
 
 ## Learn more
 
+- 📓 **[Quick-start notebook](examples/at2017gfo_quickstart.ipynb)** — AT2017GFO end-to-end with a custom model (ABC + SNPE).
 - 📘 **[Tutorial](docs/TUTORIAL.md)** — a hands-on tour of every feature, with plots.
 - 📊 **[AT2017GFO report](docs/REPORT_at2017gfo.md)** — ABC vs ABC-SMC across three models.
 - 🧩 **[Extending Whisper](docs/EXTENDING.md)** — add your own model, sampler, or distance.

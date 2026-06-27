@@ -12,9 +12,35 @@ def test_snpe_registered_without_sbi():
     assert "npe" in wp.list_samplers()
 
 
+def test_snpe_invalid_proposal_mode():
+    """proposal_mode is validated up-front (before any sbi import) -> works without the extra."""
+    lc = wp.LightCurve(time=[1.0, 2.0], band=["r", "r"], flux=[1.0, 0.5], flux_err=[0.1, 0.1])
+    prior = wp.Prior({"amplitude": wp.Uniform(0, 5), "rise_time": wp.Uniform(0.1, 5),
+                      "decay_time": wp.Uniform(0.5, 10)})
+    with pytest.raises(ValueError, match="proposal_mode"):
+        wp.fit_SNPE(lc, "flare", prior=prior, proposal_mode="bogus")
+
+
 # Everything below needs the optional [sbi] extra (sbi + torch).
 sbi = pytest.importorskip("sbi")
-from whisper_labia.samplers.snpe import _require_sbi, _to_torch_prior  # noqa: E402
+from whisper_labia.samplers.snpe import (  # noqa: E402
+    _build_density_estimator,
+    _require_sbi,
+    _to_torch_prior,
+)
+
+
+def test_build_density_estimator_dispatch():
+    import torch.nn as nn
+    # plain string with no extras -> passed straight to NPE
+    assert _build_density_estimator("maf", None, None, None, None) == "maf"
+    # an already-built factory (callable) -> used as-is
+    def fake_builder(*a, **k):
+        return None
+    assert _build_density_estimator(fake_builder, None, None, None, None) is fake_builder
+    # string + embedding/hyperparameters -> wrapped via posterior_nn (a callable, not the string)
+    built = _build_density_estimator("nsf", nn.Identity(), 16, 2, 4)
+    assert callable(built) and built != "nsf"
 
 
 def test_torch_prior_adapter_uniform_and_loguniform():
@@ -96,3 +122,21 @@ def test_snpe_dispatch_and_alias_multiround():
     assert res.sampler == "snpe" and res.info["num_rounds"] == 2
     assert res.info["total_simulations"] == 500
     assert res.n_samples == 300
+
+
+@pytest.mark.slow
+def test_snpe_embedding_net_and_custom_estimator():
+    """A custom embedding net and custom density-estimator architecture both run end-to-end."""
+    import torch.nn as nn
+    lc = _synthetic_flare_lc()
+    prior = wp.Prior({"amplitude": wp.Uniform(0, 5), "rise_time": wp.Uniform(0.1, 5),
+                      "decay_time": wp.Uniform(0.5, 10)})
+    emb = nn.Sequential(nn.Linear(len(lc), 16), nn.ReLU(), nn.Linear(16, 8), nn.ReLU())
+    res = wp.fit_SNPE(lc, "flare", prior=prior, num_rounds=1, num_simulations=200, num_samples=200,
+                      embedding_net=emb, max_num_epochs=20, seed=0)
+    assert res.samples.shape == (200, 3) and res.info["embedding_net"] == "Sequential"
+
+    res2 = wp.fit_SNPE(lc, "flare", prior=prior, num_rounds=1, num_simulations=200, num_samples=150,
+                       density_estimator="nsf", hidden_features=20, num_transforms=2, num_bins=4,
+                       max_num_epochs=20, seed=0)
+    assert res2.samples.shape == (150, 3) and res2.info["density_estimator"] == "nsf"

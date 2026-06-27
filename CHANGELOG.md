@@ -47,9 +47,15 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
   **`ABCSMCSampler`** (sequential, adaptive or explicit epsilon), and **`SNPESampler`** — **Sequential
   Neural Posterior Estimation** (`snpe`/`npe`, `fit_SNPE`) via `sbi`: the simulator is Whisper's forward
   model + Gaussian noise, the prior is auto-adapted to torch (`Uniform`→`BoxUniform`, mixed→
-  `MultipleIndependent`), `num_rounds>1` is sequential SNPE-C, and the trained sbi posterior is attached
-  as `result.posterior`. Lazy-imported optional `[sbi]` extra. `SamplerResult` with posterior summary,
-  best-fit, AIC / BIC / max-log-likelihood (χ² ≙ −2 ln L; SNPE uses the exact Gaussian value), `to_json`.
+  `MultipleIndependent`), `num_rounds>1` is sequential, and the trained sbi posterior is attached as
+  `result.posterior`. **Flexible:** a custom `embedding_net` (`torch.nn.Module`), a custom
+  `density_estimator` (or `posterior_nn` `hidden_features`/`num_transforms`/`num_bins`), parallel
+  `num_workers`, and `proposal_mode="restricted"` for truncated SNPE (`RestrictedPrior` +
+  `get_density_thresholder`, with `support_samples` capping the otherwise-1e6 support estimate). Lazy
+  optional `[sbi]` extra. `SamplerResult` with posterior summary, best-fit, AIC / BIC / max-log-likelihood
+  (χ² ≙ −2 ln L; SNPE uses the exact Gaussian value), `to_json`.
+- Notebook quick-start: `examples/at2017gfo_quickstart.ipynb` — load AT2017GFO, register a **custom
+  model**, fit with ABC, compare models, and run SNPE.
 - Likelihoods (`likelihood.py`): `GaussianLikelihood`, `GaussianLikelihoodWithUpperLimits`,
   `MixtureGaussianLikelihood`, `make_likelihood` — **flux or apparent-magnitude space**, default by
   data type, upper limits in flux/mag. _Standalone + tested; sampler integration pending._
@@ -61,4 +67,5 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 ### Packaging & docs
 - pip-installable from GitHub; relaxed dependency pins (no forced numpy/scipy downgrade); redback is an
   optional `[models]` extra — Phase-1 data + plotting + ABC run with no redback and no compiler.
-- Tutorial, API reference, extensibility guide, and an AT2017GFO model-comparison report. 138 tests.
+- Tutorial, API reference, extensibility guide, an AT2017GFO model-comparison report, and a quick-start
+  notebook. 141 tests.

@@ -4,7 +4,7 @@ Generated for **v0.0.1.dev0**. Covers **Phase 1 (data ingestion + plotting)** an
 layer** (pluggable models, priors, distance, samplers).
 
 - **Environment:** Docker container `phe_sbi`, Python 3.11.
-- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (138 tests; `-m "not slow"` skips the 2 SNPE training tests).
+- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (141 tests; `-m "not slow"` skips the 3 SNPE training tests).
 
 ## Package map
 
@@ -176,16 +176,28 @@ distances). Perturbs only parameters and rejects proposals outside the prior; `i
 epsilon / acceptance / `total_simulations`.
 
 **`SNPESampler.fit(lc, model, prior=None, *, num_rounds=2, num_simulations=1000, space="auto",
-density_estimator="maf", num_samples=10000, device="cpu", seed=0, show_progress=False, num_workers=1,
-max_logl_scan=2000, **train_kwargs)`** — Sequential Neural Posterior Estimation via `sbi` (`io.snpe`).
-Needs the optional **`[sbi]`** extra (sbi + torch; imported lazily). The simulator is Whisper's forward
-model + Gaussian noise from the data errors; the prior is adapted automatically (`Uniform`→`BoxUniform`,
-mixed `Uniform`/`LogUniform`→`MultipleIndependent`). `num_rounds=1` is amortized NPE, `>1` is sequential
-SNPE-C; `num_simulations` is per round; `space` ('auto'|'flux'|'magnitude') matches the likelihood.
-Extra kwargs pass to `NPE.train` (e.g. `max_num_epochs`). `max_log_likelihood`/`AIC`/`BIC` are the exact
-Gaussian values at the best posterior draw. The trained sbi posterior is attached as `result.posterior`
-(and `result.posteriors` per round) for resampling / `sbi.analysis.pairplot`. `fit_SNPE(...)` is the
-convenience wrapper; `"snpe"` and `"npe"` both dispatch here.
+density_estimator="maf", embedding_net=None, hidden_features=None, num_transforms=None, num_bins=None,
+proposal_mode="posterior", truncate_quantile=1e-4, support_samples=10000, num_samples=10000,
+device="cpu", seed=0, show_progress=False, num_workers=1, max_logl_scan=2000, **train_kwargs)`** —
+Sequential Neural Posterior Estimation via `sbi` (`samplers.snpe`). Needs the optional **`[sbi]`** extra
+(sbi + torch; imported lazily). The simulator is Whisper's forward model + Gaussian noise from the data
+errors; the prior is adapted automatically (`Uniform`→`BoxUniform`, mixed `Uniform`/`LogUniform`→
+`MultipleIndependent`). `num_rounds=1` is amortized NPE, `>1` is sequential; `num_simulations` is per
+round; `space` ('auto'|'flux'|'magnitude') matches the likelihood; `num_workers` parallelizes simulation.
+
+- **Density estimator (flexible):** `density_estimator` is an estimator name **or** a pre-built
+  `posterior_nn(...)` factory; pass an **`embedding_net`** (`torch.nn.Module`; input dim = number of
+  light-curve points) and/or `hidden_features` / `num_transforms` / `num_bins` to build a custom
+  architecture.
+- **Sequential scheme:** `proposal_mode='posterior'` (SNPE-C, default) or `'restricted'` (truncated SNPE
+  via `RestrictedPrior` + `get_density_thresholder(quantile=truncate_quantile)`; support estimated from
+  `support_samples` draws — kept modest, since sbi's default 1e6 can take hours; rejection sampling makes
+  it compute-heavy).
+
+Extra kwargs pass to `NPE.train` (e.g. `max_num_epochs`, `training_batch_size`, `stop_after_epochs`).
+`max_log_likelihood`/`AIC`/`BIC` are the exact Gaussian values at the best posterior draw. The trained
+sbi posterior is attached as `result.posterior` (and `result.posteriors` per round) for resampling /
+`sbi.analysis.pairplot`. `fit_SNPE(...)` is the convenience wrapper; `"snpe"` and `"npe"` both dispatch here.
 
 **`SamplerResult`** fields: `sampler`, `model`, `parameters`, `samples` (DataFrame of accepted draws
 + `distance`), `summary` (median/ci16/ci84/mean/std per param), `best_params`, `n_data`, `n_params`,
@@ -240,7 +252,7 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `scripts/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (138 tests, all passing)
+## 8. Test coverage (141 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -258,7 +270,7 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 | `test_units.py` | 12 | F_ν/F_λ→Jy, per-point λ, NaN-λ error, mag rejects flux unit, no-unit default, flux dimensionality. |
 | `test_svo.py` | 15 | FILTER_LOOKUP→SVO, mocked metadata/index, cache hit + disk cache, corrupt-cache (×4 params), graceful degrade, manual override (no spurious warn), transmission, ambiguity. |
 | `test_ingestion.py` | 25 | data_mode/output_format, `__call__`, redshift (arg/column/unknown/0/neg/NaN/all-NaN), units, band-info, subset preservation, backward-compat ZP, flux-mode. |
-| `test_snpe.py` | 5 | registry/alias (no sbi), torch-prior adapter (Uniform/LogUniform + reject), SNPE fit end-to-end + dispatch/multi-round (`slow`; need `[sbi]`). |
+| `test_snpe.py` | 8 | registry/alias + proposal-mode validation (no sbi), torch-prior adapter, density-estimator dispatch; SNPE fit end-to-end / multi-round / embedding-net + custom estimator (`slow`; need `[sbi]`). |
 
 Fixtures: `tests/data/at2017gfo.csv`, `tests/data/ztf18aarlhfw.csv`. Figures + ABC JSON in `docs/figures/`.
 All SVO/network calls are **mocked** — no live network in CI. See

@@ -38,7 +38,12 @@ def _require_sbi():
     try:
         import torch
         from sbi.inference import NPE, simulate_for_sbi
-        from sbi.utils import BoxUniform, MultipleIndependent
+        from sbi.utils import (
+            BoxUniform,
+            MultipleIndependent,
+            RestrictedPrior,
+            get_density_thresholder,
+        )
         from sbi.utils.user_input_checks import (
             check_sbi_inputs,
             process_prior,
@@ -50,7 +55,8 @@ def _require_sbi():
             "`pip install 'whisper-labia[sbi]'` (or `pip install sbi torch`).") from exc
     return SimpleNamespace(
         torch=torch, NPE=NPE, simulate_for_sbi=simulate_for_sbi, BoxUniform=BoxUniform,
-        MultipleIndependent=MultipleIndependent, process_prior=process_prior,
+        MultipleIndependent=MultipleIndependent, RestrictedPrior=RestrictedPrior,
+        get_density_thresholder=get_density_thresholder, process_prior=process_prior,
         process_simulator=process_simulator, check_sbi_inputs=check_sbi_inputs)
 
 
@@ -112,23 +118,67 @@ def _build_simulator(predict, names, times, bands, model_in_space, sigma, torch,
     return simulator
 
 
+def _build_density_estimator(density_estimator, embedding_net, hidden_features,
+                             num_transforms, num_bins):
+    """Resolve the sbi density estimator.
+
+    * a callable (an already-built ``posterior_nn(...)`` factory) is used as-is;
+    * a string with no extra options is passed straight to ``NPE`` (sbi builds the default);
+    * a string **plus** an ``embedding_net`` and/or hyperparameters is wrapped in ``posterior_nn`` so
+      a custom feature-extractor / architecture can be used (essential for high-dimensional,
+      multi-band light curves).
+    """
+    if callable(density_estimator) and not isinstance(density_estimator, str):
+        return density_estimator
+    if embedding_net is None and hidden_features is None and num_transforms is None \
+            and num_bins is None:
+        return density_estimator
+    from sbi.neural_nets import posterior_nn
+    kwargs = {}
+    if embedding_net is not None:
+        kwargs["embedding_net"] = embedding_net
+    if hidden_features is not None:
+        kwargs["hidden_features"] = hidden_features
+    if num_transforms is not None:
+        kwargs["num_transforms"] = num_transforms
+    if num_bins is not None:
+        kwargs["num_bins"] = num_bins
+    return posterior_nn(model=density_estimator, **kwargs)
+
+
 class SNPESampler(BaseSampler):
     """Sequential Neural Posterior Estimation (sbi ``NPE``). See the module docstring."""
 
     name = "snpe"
 
     def fit(self, lc, model, prior=None, *, num_rounds=2, num_simulations=1000, space="auto",
-            density_estimator="maf", num_samples=10000, device="cpu", seed=0,
-            show_progress=False, num_workers=1, max_logl_scan=2000, **train_kwargs):
+            density_estimator="maf", embedding_net=None, hidden_features=None, num_transforms=None,
+            num_bins=None, proposal_mode="posterior", truncate_quantile=1e-4,
+            support_samples=10000, num_samples=10000, device="cpu", seed=0, show_progress=False,
+            num_workers=1, max_logl_scan=2000, **train_kwargs):
         """Fit ``lc`` with ``model`` via SNPE/NPE.
 
         ``num_rounds=1`` is amortized NPE; ``num_rounds>1`` focuses simulations sequentially.
-        ``num_simulations`` is *per round*. ``space`` ('auto'|'flux'|'magnitude') sets the data space
-        for the simulator and the Gaussian noise model (errors required). ``density_estimator`` is any
-        sbi estimator ('maf', 'nsf', 'mdn', ...). Extra keyword args pass through to ``NPE.train``
-        (e.g. ``max_num_epochs``, ``training_batch_size``). The trained posterior is attached as
-        ``result.posterior``.
+        ``num_simulations`` is *per round*; ``num_workers`` parallelizes simulation. ``space``
+        ('auto'|'flux'|'magnitude') sets the data space for the simulator and the Gaussian noise model
+        (errors required).
+
+        **Density estimator (flexible):** ``density_estimator`` is an sbi estimator name ('maf', 'nsf',
+        'mdn', ...) **or** a pre-built ``posterior_nn(...)`` factory. Pass an ``embedding_net``
+        (a ``torch.nn.Module`` mapping the simulated light curve to features — its input dim must equal
+        the number of light-curve points) and/or ``hidden_features`` / ``num_transforms`` / ``num_bins``
+        to build a custom architecture via ``sbi``'s ``posterior_nn``.
+
+        **Sequential scheme:** ``proposal_mode='posterior'`` (default) is SNPE-C (propose from the latest
+        posterior). ``proposal_mode='restricted'`` is **truncated SNPE** — each round restricts the prior
+        to the high-density region with ``get_density_thresholder(quantile=truncate_quantile)`` +
+        ``RestrictedPrior`` (often more robust); the support is estimated from ``support_samples`` draws
+        (kept modest; sbi's default of 1e6 can take hours). Extra keyword args pass through to ``NPE.train``
+        (e.g. ``max_num_epochs``, ``training_batch_size``, ``stop_after_epochs``). The trained sbi
+        posterior is attached as ``result.posterior`` (per round in ``result.posteriors``).
         """
+        if proposal_mode not in ("posterior", "restricted"):
+            raise ValueError(f"proposal_mode must be 'posterior' or 'restricted'; got {proposal_mode!r}.")
         sb = _require_sbi()
         torch = sb.torch
         model = get_model(model)
@@ -155,8 +205,11 @@ class SNPESampler(BaseSampler):
         sb.check_sbi_inputs(simulator, torch_prior)
 
         x_o = torch.as_tensor(np.asarray(lik.y, dtype=float), dtype=torch.float32)
-        inference = sb.NPE(prior=torch_prior, density_estimator=density_estimator,
+        de_builder = _build_density_estimator(
+            density_estimator, embedding_net, hidden_features, num_transforms, num_bins)
+        inference = sb.NPE(prior=torch_prior, density_estimator=de_builder,
                            device=device, show_progress_bars=show_progress)
+        restricted = proposal_mode == "restricted"
 
         t0 = time.perf_counter()
         proposal = torch_prior
@@ -165,12 +218,28 @@ class SNPESampler(BaseSampler):
             theta, x = sb.simulate_for_sbi(
                 simulator, proposal, num_simulations=int(num_simulations),
                 num_workers=num_workers, seed=int(seed) + r, show_progress_bar=show_progress)
-            density_estimator_net = inference.append_simulations(
-                theta, x, proposal=proposal, exclude_invalid_x=True).train(
-                show_train_summary=False, **train_kwargs)
-            posterior = inference.build_posterior(density_estimator_net)
+            if restricted:
+                # Truncated SNPE: the proposal is a RestrictedPrior (not a posterior) -> first-round loss.
+                de_net = inference.append_simulations(theta, x, exclude_invalid_x=True).train(
+                    force_first_round_loss=True, show_train_summary=False, **train_kwargs)
+            else:
+                de_net = inference.append_simulations(
+                    theta, x, proposal=proposal, exclude_invalid_x=True).train(
+                    show_train_summary=False, **train_kwargs)
+            posterior = inference.build_posterior(de_net)
             posteriors.append(posterior)
-            proposal = posterior.set_default_x(x_o)
+            if r < int(num_rounds) - 1:                      # update proposal for the next round
+                posterior.set_default_x(x_o)
+                if restricted:
+                    # num_samples_to_estimate_support defaults to 1e6 in sbi (hours of sampling);
+                    # cap it to keep truncated SNPE practical.
+                    accept_reject_fn = sb.get_density_thresholder(
+                        posterior, quantile=float(truncate_quantile),
+                        num_samples_to_estimate_support=int(support_samples))
+                    proposal = sb.RestrictedPrior(
+                        torch_prior, accept_reject_fn, sample_with="rejection")
+                else:
+                    proposal = posterior
         runtime = time.perf_counter() - t0
 
         samples_np = np.asarray(
@@ -190,9 +259,12 @@ class SNPESampler(BaseSampler):
         info = {
             "num_rounds": int(num_rounds), "num_simulations": int(num_simulations),
             "total_simulations": int(num_rounds) * int(num_simulations),
-            "density_estimator": str(density_estimator), "space": lik.space,
-            "num_samples": int(num_samples), "device": str(device), "seed": int(seed),
-            "num_workers": int(num_workers),
+            "density_estimator": density_estimator if isinstance(density_estimator, str) else "custom",
+            "embedding_net": type(embedding_net).__name__ if embedding_net is not None else None,
+            "proposal_mode": proposal_mode,
+            "truncate_quantile": float(truncate_quantile) if proposal_mode == "restricted" else None,
+            "space": lik.space, "num_samples": int(num_samples), "device": str(device),
+            "seed": int(seed), "num_workers": int(num_workers),
         }
         result = SamplerResult(
             sampler="snpe", model=model.name, parameters=list(param_names), samples=samples,
