@@ -5,6 +5,19 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### `plot_corner` + WAIC
+- **`wp.plot_corner(posteriors, ...)`** — a built-in, documented corner plot for **overlaying a list of
+  posteriors** (SamplerResults, DataFrames, dicts, or arrays) on one publication-ready figure: shared
+  per-parameter ranges so panels align, a **dark, distinct palette** (`CORNER_PALETTE`), contour lines
+  (not filled) so overlaps stay legible, `log_params=` for log axes, `truths=`, and a colour→label
+  legend. `scripts/corner_kilonova_benchmark.py` uses it for the AT2017GFO benchmark posteriors
+  (`docs/figures/at2017gfo_corner_flux.png`) — the corner shows whether the samplers are *compatible*
+  (full posteriors + uncertainties), which the point-estimate table cannot.
+- **`wp.waic(posterior, lc, model, ...)`** — the **Widely Applicable Information Criterion** (Watanabe
+  2010), a fully-Bayesian fit score (lower is better) that uses the *whole* posterior: returns `waic`,
+  `lppd`, `p_waic` (effective #params), `se`, with a `fixed=` hook for pinned parameters. Backed by a
+  new pointwise log-likelihood (`GaussianLikelihood[WithUpperLimits].log_likelihood_pointwise`).
+
 ### SNPE on GPU
 - **SNPE can now train on a GPU.** `fit_SNPE(..., device=...)` accepts `'cpu'` (default), `'cuda'` /
   `'gpu'` / `'cuda:N'`, or **`'auto'`** (CUDA when available, else CPU). The torch prior and observed
@@ -160,4 +173,4 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 - pip-installable from GitHub; relaxed dependency pins (no forced numpy/scipy downgrade); redback is an
   optional `[models]` extra — Phase-1 data + plotting + ABC run with no redback and no compiler.
 - Tutorial, API reference, design rationale, extensibility + contributing guides, an AT2017GFO
-  model-comparison report, and a quick-start notebook. LICENSE (GPL-3.0), CITATION.cff, py.typed. 175 tests (redback-backed model + benchmark tests skip without the [models] extra).
+  model-comparison report, and a quick-start notebook. LICENSE (GPL-3.0), CITATION.cff, py.typed. 183 tests (redback-backed model + benchmark tests skip without the [models] extra).

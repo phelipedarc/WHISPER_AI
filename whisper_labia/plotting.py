@@ -139,3 +139,134 @@ def plot_light_curve(lc, *, layout="report", quantity="apparent_mag", bands=None
     if save is not None:
         fig.savefig(save, dpi=130, bbox_inches="tight")
     return fig
+
+
+# --- corner plot -----------------------------------------------------------------------------------
+
+#: Dark, distinct, print-friendly palette for overlaying posteriors (dark blue, dark red, dark green,
+#: deep purple, dark orange, dark slate). Saturated/dark and well-separated in hue so the contours and
+#: marginals stay legible when several posteriors are overlaid.
+CORNER_PALETTE = ["#08306b", "#a50026", "#006d2c", "#54278f", "#993404", "#252525"]
+
+
+def _posterior_to_frame(p, parameters):
+    """Coerce one posterior (SamplerResult / DataFrame / dict / 2-D array) to (DataFrame, label)."""
+    import pandas as pd
+
+    if hasattr(p, "samples") and hasattr(p, "sampler"):        # SamplerResult
+        return p.samples, str(p.sampler)
+    if isinstance(p, pd.DataFrame):
+        return p, None
+    if isinstance(p, dict):
+        return pd.DataFrame(p), None
+    arr = np.asarray(p, dtype=float)
+    if parameters is None or arr.ndim != 2 or arr.shape[1] != len(parameters):
+        raise ValueError("array posteriors need a matching `parameters` list (one name per column).")
+    return pd.DataFrame(arr, columns=list(parameters)), None
+
+
+def plot_corner(posteriors, *, labels=None, parameters=None, colors=None, truths=None,
+                bins=30, levels=(0.39, 0.86), smooth=1.0, log_params=None, title=None,
+                legend_loc="upper right", save=None, **corner_kwargs):
+    """Overlay one or more posteriors on a single publication-ready corner plot.
+
+    A thin, well-styled wrapper over :mod:`corner` for comparing posteriors (e.g. several samplers on
+    the same data): shared per-parameter ranges so the panels align, a dark distinct colour per
+    posterior, contour lines (not filled) so overlaps stay readable, and a legend.
+
+    Parameters
+    ----------
+    posteriors : sequence
+        Each item is a :class:`~whisper_labia.samplers.base.SamplerResult`, a ``pandas.DataFrame`` of
+        samples, a ``{name: array}`` dict, or a 2-D array (then pass ``parameters`` for the columns).
+    labels : sequence of str, optional
+        Legend label per posterior (defaults to each ``SamplerResult``'s sampler name, else
+        ``"posterior i"``).
+    parameters : sequence of str, optional
+        Parameters (columns) to plot, in order. Defaults to the columns common to every posterior.
+    colors : sequence, optional
+        One colour per posterior; defaults to :data:`CORNER_PALETTE`.
+    truths : dict | sequence, optional
+        Reference values drawn once as solid black lines (a dict is keyed by parameter name).
+    bins, smooth : int, float
+        Histogram bins and Gaussian contour smoothing.
+    levels : tuple
+        2-D enclosed-probability contour levels (default ``(0.39, 0.86)`` ≈ 1σ/2σ in 2-D).
+    log_params : sequence of str, optional
+        Parameters to display on a ``log10`` axis (samples are log10-transformed; the label is prefixed).
+    title : str, optional
+        Figure suptitle.
+    save : str, optional
+        If given, save the figure there (PNG, 200 dpi).
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+
+    Examples
+    --------
+    >>> import whisper_labia as wp
+    >>> fig = wp.plot_corner([res_abc, res_mcmc, res_snpe],
+    ...                      labels=["ABC", "MCMC", "SNPE"], log_params=["mej_1"],
+    ...                      title="AT2017GFO posteriors")
+    """
+    import corner
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    if not len(posteriors):
+        raise ValueError("plot_corner needs at least one posterior.")
+    frames, auto_labels = [], []
+    for i, p in enumerate(posteriors):
+        frame, lab = _posterior_to_frame(p, parameters)
+        frames.append(frame)
+        auto_labels.append(lab or f"posterior {i + 1}")
+    labels = list(labels) if labels is not None else auto_labels
+
+    if parameters is None:
+        parameters = [c for c in frames[0].columns if all(c in f.columns for f in frames)]
+        if not parameters:
+            raise ValueError("posteriors share no common parameter columns; pass parameters=...")
+    log_params = set(log_params or [])
+    disp = [(r"$\log_{10}\,$" + p) if p in log_params else p for p in parameters]
+
+    def _array(frame):
+        return np.column_stack([
+            np.log10(np.asarray(frame[p], float)) if p in log_params else np.asarray(frame[p], float)
+            for p in parameters])
+
+    samples = [_array(f) for f in frames]
+    union = np.vstack(samples)
+    rng = []
+    for j in range(union.shape[1]):
+        lo, hi = np.percentile(union[:, j], 0.5), np.percentile(union[:, j], 99.5)
+        rng.append((lo, hi) if hi > lo else (lo - 0.5, hi + 0.5))
+
+    if colors is None:
+        colors = [CORNER_PALETTE[i % len(CORNER_PALETTE)] for i in range(len(samples))]
+    if isinstance(truths, dict):
+        truths = [(np.log10(truths[p]) if p in log_params else truths[p]) if p in truths else None
+                  for p in parameters]
+
+    base = dict(bins=bins, smooth=smooth, range=rng, plot_datapoints=False, plot_density=False,
+                fill_contours=False, levels=levels,
+                label_kwargs=dict(fontsize=14, fontweight="bold"))
+    base.update(corner_kwargs)
+    fig = None
+    for i, X in enumerate(samples):
+        fig = corner.corner(
+            X, fig=fig, color=colors[i], labels=disp,
+            hist_kwargs=dict(density=True, color=colors[i], lw=1.8,
+                             histtype="stepfilled", alpha=0.30),
+            contour_kwargs=dict(colors=colors[i], linewidths=2.0),
+            truths=truths if i == 0 else None, truth_color="0.1",
+            truth_kwargs=dict(lw=1.4, ls="--"), **base)
+    for ax in fig.get_axes():
+        ax.tick_params(labelsize=11)
+    fig.legend(handles=[Line2D([], [], color=c, lw=2.6, label=l) for c, l in zip(colors, labels)],
+               loc=legend_loc, frameon=True, fontsize=13, title="posterior", title_fontsize=13)
+    if title:
+        fig.suptitle(title, y=1.02, fontsize=16, weight="bold")
+    if save is not None:
+        fig.savefig(save, dpi=200, bbox_inches="tight")
+    return fig

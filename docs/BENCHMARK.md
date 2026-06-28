@@ -84,6 +84,19 @@ The two likelihood spaces agree on the ejecta region and all three samplers over
 visibly different compromises precisely because no parameters fit — the benchmark is sensitive to model
 adequacy, which is the point.
 
+### Posteriors, not just point estimates
+
+The table reports medians, which carry **no uncertainty** — so it cannot tell you whether two methods
+are *compatible*. The corner plot can: it shows the full posterior (with 1σ/2σ contours) for every
+sampler at once (`scripts/corner_kilonova_benchmark.py`, via the built-in `wp.plot_corner`):
+
+![AT2017GFO posteriors, all samplers](figures/at2017gfo_corner_magnitude.png)
+
+The ABC / MCMC / SNPE (CPU) / SNPE (GPU) posteriors overlap in the same region of ejecta space — the
+methods are mutually consistent — with MCMC the tightest. (`wp.waic` adds a fully-Bayesian fit score;
+note it is numerically unstable for the broad ABC / under-converged SNPE posteriors here — `p_waic`
+≫ #parameters — so it is reported as a diagnostic, not a clean ranking.)
+
 ## SNPE on GPU vs CPU
 
 `fit_SNPE(device='cuda'|'auto'|...)` trains the neural density estimator on a GPU. The GPU accelerates

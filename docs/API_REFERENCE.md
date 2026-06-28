@@ -4,14 +4,15 @@ Generated for **v0.0.1.dev0**. Covers data ingestion + plotting and the inferenc
 axes (models, samplers, likelihoods, distances) with the ABC / ABC-SMC / MCMC / SNPE samplers.
 
 - **Environment:** Docker container `phe_sbi`, Python 3.11.
-- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (177 tests; `-m "not slow"` skips the SNPE training/GPU + mck19 / kilonova fit + benchmark tests).
+- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (183 tests; `-m "not slow"` skips the SNPE training/GPU + mck19 / kilonova fit + benchmark tests).
 
 ## Package map
 
 ```
 whisper_labia/
   __init__.py          # public API exports
-  plotting.py          # plot_light_curve
+  plotting.py          # plot_light_curve, plot_corner
+  metrics.py           # waic (Widely Applicable Information Criterion)
   priors.py            # Uniform, LogUniform, Prior
   distance.py          # chi2_distance
   likelihood.py        # GaussianLikelihood, ...WithUpperLimits, Mixture..., make_likelihood
@@ -21,6 +22,7 @@ whisper_labia/
 ```
 
 Top-level (`import whisper_labia as wp`): `LightCurve`, `load_lightcurve`, `plot_light_curve`,
+`plot_corner`, `CORNER_PALETTE`, `waic`,
 `group_bands`, `FILTER_LOOKUP`, `resolve_band`, `resolve_bands`, `LSST_BAND_INFO`, `SvoUnavailable`,
 `register_manual_band`, `unregister_manual_band`, `clear_manual_bands`, `Prior`, `Uniform`, `LogUniform`,
 `Model`, `register_model`, `get_model`, `list_models`, `chi2_distance`, `register_distance`,
@@ -116,9 +118,23 @@ validates + converts; `to_flux_density_jy` accepts F_ν directly and F_λ via `u
 NaN); `check_magnitude_unit` rejects a flux unit on a magnitude column. A no-unit column warns and
 applies the documented per-mode default.
 
-## 5. Plotting — `plot_light_curve(lc, *, layout="report", quantity="apparent_mag", bands=None, ncols=3, figsize=None, title=None, save=None)`
-`layout`: `"report"` (mag + flux panels) or `"grid"` (per band). `quantity`: `apparent_mag` /
+## 5. Plotting
+
+**`plot_light_curve(lc, *, layout="report", quantity="apparent_mag", bands=None, ncols=3, figsize=None, title=None, save=None)`**
+— `layout`: `"report"` (mag + flux panels) or `"grid"` (per band). `quantity`: `apparent_mag` /
 `absolute_mag` (needs redshift) / `flux`. Markers: detections = circles, SNR<3 = △, upper limits = ▽.
+
+**`plot_corner(posteriors, *, labels=None, parameters=None, colors=None, truths=None, bins=30,
+levels=(0.39, 0.86), smooth=1.0, log_params=None, title=None, legend_loc="upper right", save=None, **corner_kwargs)`**
+— overlay a **list of posteriors** on one publication-ready corner plot. Each posterior is a
+`SamplerResult`, a `DataFrame`, a `{name: array}` dict, or a 2-D array (then pass `parameters`).
+Shared per-parameter ranges align the panels; each posterior gets a distinct dark colour
+(`CORNER_PALETTE`); 2-D panels are contour **lines** (default `levels` ≈ 1σ/2σ) and the diagonals are
+step histograms, so several posteriors stay readable overlaid. `parameters` defaults to the columns
+common to all inputs; `log_params` puts those on a `log10` axis; `truths` (dict or list) draws dashed
+reference lines; a colour→label legend is added. Returns the `Figure`. Ideal for comparing samplers on
+the same data — the posteriors (with uncertainties) show whether methods are *compatible*, which a table
+of point estimates cannot.
 
 ---
 
@@ -288,6 +304,23 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 > Status: implemented + tested but **not yet wired into the samplers** (ABC/ABC-SMC currently score
 > with `chi2_distance`). Adding `likelihood=` / `space=` to the samplers is the next step.
 
+Each Gaussian likelihood also exposes **`log_likelihood_pointwise(model_flux) -> array`** (the per-data-
+point log-likelihood, summing to `log_likelihood`) — the ingredient WAIC needs.
+
+### 6.6 Metrics  (`whisper_labia.metrics`)
+
+**`waic(posterior, lc, model=None, *, space="auto", likelihood="auto", fixed=None, max_samples=2000, seed=0)`**
+— the **Widely Applicable Information Criterion** (Watanabe 2010; Gelman et al. 2014): a fully-Bayesian
+fit score that, unlike AIC/BIC (which use one best-fit point), uses the **whole posterior**. It evaluates
+the model's *pointwise* log-likelihood across the posterior draws and returns a dict with `waic`
+(`= -2(lppd - p_waic)`, **lower is better**), `lppd`, `p_waic` (effective # parameters), `se` (standard
+error), `n_samples`, `n_data`. `posterior` may be a `SamplerResult` (uses `.samples`/`.model`), a
+`DataFrame`, or an array; `fixed=` supplies values for parameters pinned during the fit (so absent from
+the posterior columns); `max_samples` caps the per-draw model evaluations (matters for slow simulators).
+Note `p_waic` (and hence WAIC) inflates for posteriors much broader than the likelihood — e.g. ABC's
+tolerance posterior or an under-converged SNPE run — which is itself a useful diagnostic; magnitude space
+is numerically gentler than flux space (whose tiny errors make the likelihood very sharp).
+
 ## Notes & limitations (review findings)
 
 - **Metrics vs likelihood:** ABC/ABC-SMC score with the χ² distance, so `AIC`/`BIC`/
@@ -309,7 +342,7 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `scripts/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (177 tests, all passing)
+## 8. Test coverage (183 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -317,7 +350,8 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 | `test_bands.py` | 11 | Aliases, case-sensitivity, `group_bands`/`FILTER_LOOKUP`, `unmapped_bands`. |
 | `test_schema.py` | 11 | Validation, subsetting, `add_*`, `snr`/`select_snr`, `set_explosion_date`, upper limits. |
 | `test_loader.py` | 12 | AT2017GFO load, window/subset, grouping, `min_snr`, `explosion_date`, upper limits. |
-| `test_plotting.py` | 5 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers. |
+| `test_plotting.py` | 7 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers; `plot_corner` overlay/legend, common-params + log axes + array/empty errors. |
+| `test_metrics.py` | 4 | WAIC keys + finite + better-fit-lower ordering, `fixed=`/subsampling, and pointwise log-lik (Gaussian + upper-limits) summing to the total. |
 | `test_priors.py` | 6 | Uniform/LogUniform/Prior sampling, log_prob, rescale, picklability. |
 | `test_models.py` | 8 | flare/bazin/gaussian_rise (incl. flare pre-explosion=0, bazin tail→0), custom model, errors. |
 | `test_distance.py` | 2 | chi² zero/known value. |

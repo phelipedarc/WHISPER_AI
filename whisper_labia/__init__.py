@@ -24,7 +24,8 @@ from .io import (
     resolve_bands,
     unregister_manual_band,
 )
-from .plotting import plot_light_curve
+from .plotting import CORNER_PALETTE, plot_corner, plot_light_curve
+from .metrics import waic
 from .priors import LogUniform, Prior, Uniform
 from .distance import chi2_distance, get_distance, list_distances, register_distance
 from .likelihood import (
@@ -50,7 +51,8 @@ from .samplers import (
 __all__ = [
     "__version__",
     # data + plotting
-    "LightCurve", "load_lightcurve", "plot_light_curve", "group_bands", "FILTER_LOOKUP",
+    "LightCurve", "load_lightcurve", "plot_light_curve", "plot_corner", "CORNER_PALETTE",
+    "group_bands", "FILTER_LOOKUP",
     "resolve_band", "resolve_bands", "LSST_BAND_INFO", "SvoUnavailable",
     "register_manual_band", "unregister_manual_band", "clear_manual_bands",
     # priors / models
@@ -64,4 +66,6 @@ __all__ = [
     # samplers (registry)
     "fit_ABC", "fit_ABC_SMC", "fit_MCMC", "fit_SNPE", "fit", "SamplerResult", "register_sampler",
     "list_samplers",
+    # metrics
+    "waic",
 ]

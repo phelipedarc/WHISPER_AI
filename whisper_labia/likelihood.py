@@ -62,6 +62,12 @@ class GaussianLikelihood:
         res = (self.y - self.model_in_space(model_flux)) / self.sigma
         return float(-0.5 * np.sum(res * res) + self._log_norm)
 
+    def log_likelihood_pointwise(self, model_flux):
+        """Per-data-point log-likelihood (length ``n_data``). Sums to :meth:`log_likelihood`; the
+        pointwise terms are what WAIC needs (see :func:`whisper_labia.metrics.waic`)."""
+        res = (self.y - self.model_in_space(model_flux)) / self.sigma
+        return -0.5 * (res * res) - 0.5 * (_LN2PI + 2.0 * np.log(self.sigma))
+
     def summary(self):
         return {"likelihood": "gaussian", "space": self.space, "n_data": int(self.y.size)}
 
@@ -107,6 +113,24 @@ class GaussianLikelihoodWithUpperLimits(GaussianLikelihood):
                 prob = self._cdf((limit - model_ul) / sigma_ul)         # true flux < limit
             ll += float(np.sum(np.log(np.clip(prob, _MIN_PROB, 1.0 - _MIN_PROB))))
         return float(ll)
+
+    def log_likelihood_pointwise(self, model_flux):
+        """Per-point log-likelihood: Gaussian at detections, log upper-limit probability elsewhere."""
+        m = self.model_in_space(model_flux)
+        out = np.empty(self.y.size, dtype=float)
+        det = self.detections
+        if np.any(det):
+            res = (self.y[det] - m[det]) / self.sigma[det]
+            out[det] = -0.5 * (res * res) - 0.5 * (_LN2PI + 2.0 * np.log(self.sigma[det]))
+        ul = ~det
+        if np.any(ul):
+            limit, model_ul = self.y[ul], m[ul]
+            if self.space == "magnitude":
+                prob = 1.0 - self._cdf((limit - model_ul) / (POGSON / self.upper_limit_sigma))
+            else:
+                prob = self._cdf((limit - model_ul) / (limit / self.upper_limit_sigma))
+            out[ul] = np.log(np.clip(prob, _MIN_PROB, 1.0 - _MIN_PROB))
+        return out
 
     def summary(self):
         return {"likelihood": "gaussian_upper_limits", "space": self.space,
