@@ -14,7 +14,10 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import pandas as pd
 
+import warnings
+
 from ..distance import chi2_distance, get_distance
+from ..likelihood import make_likelihood
 from ..models import get_model
 from .base import BaseSampler, SamplerResult, summarize_posterior
 
@@ -119,14 +122,23 @@ class ABCSampler(BaseSampler):
         distances = np.concatenate(dist_parts)
         epsilon = float(np.quantile(distances, quantile)) if threshold is None else float(threshold)
         keep = distances <= epsilon
+        if not keep.any():
+            warnings.warn(
+                f"ABC accepted 0 of {n_simulations} draws at epsilon={epsilon:g}; the posterior is "
+                "empty. best_params / AIC / BIC reflect the single closest draw only.", stacklevel=2)
         accepted = [thetas[i] for i in np.nonzero(keep)[0]]
         samples = pd.DataFrame(accepted, columns=model.parameters)
         samples["distance"] = distances[keep]
 
-        # Model-selection metrics: chi-square distance == -2 ln L (Gaussian).
+        # Model-selection metrics. The chi-square distance drops the Gaussian normalisation and is
+        # always in flux space; to make AIC/BIC **comparable across samplers** (MCMC/SNPE use the exact
+        # Gaussian log-likelihood in the data's natural space), evaluate that same likelihood at the
+        # best fit here too.
         chi2_min = float(distances.min())
         k, n = len(model.parameters), lc.n_points
         best = thetas[int(np.argmin(distances))]
+        lik = make_likelihood(lc)
+        max_log_likelihood = float(lik.log_likelihood(np.asarray(predict(best, times, bands), dtype=float)))
         info = {
             "n_simulations": int(n_simulations),
             "n_accepted": int(keep.sum()),
@@ -135,13 +147,15 @@ class ABCSampler(BaseSampler):
             "quantile": None if threshold is not None else float(quantile),
             "n_jobs": int(n_jobs),
             "distance": getattr(distance, "__name__", str(distance)),
+            "likelihood_space": lik.space,
         }
         return SamplerResult(
             sampler="abc", model=model.name, parameters=list(model.parameters),
             samples=samples, summary=summarize_posterior(samples, model.parameters),
             best_params=best, n_data=n, n_params=k, runtime_s=runtime, info=info,
-            min_distance=chi2_min, max_log_likelihood=-0.5 * chi2_min,
-            aic=float(chi2_min + 2 * k), bic=float(chi2_min + k * np.log(n)),
+            min_distance=chi2_min, max_log_likelihood=max_log_likelihood,
+            aic=float(-2.0 * max_log_likelihood + 2 * k),
+            bic=float(-2.0 * max_log_likelihood + k * np.log(n)),
         )
 
 

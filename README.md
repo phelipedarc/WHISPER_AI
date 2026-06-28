@@ -11,7 +11,7 @@ pluggable: you can register your own, or optionally pull them from the external
 auxiliary dependency used *only* as a source of models and priors — Whisper does not otherwise rely on it.
 
 > **Status:** early development. Data ingestion (with astropy units, redshift handling, and SVO band
-> resolution), plotting, and the **ABC / ABC-SMC / MCMC / SNPE** samplers are done and tested (**183 unit
+> resolution), plotting, and the **ABC / ABC-SMC / MCMC / SNPE** samplers are done and tested (**189 unit
 > tests**). Nested sampling (Dynesty) and likelihood-in-the-loop ABC come next
 > (see [`docs/DESIGN.md`](docs/DESIGN.md) § Planned extensions).
 

@@ -4,7 +4,7 @@ Generated for **v0.0.1.dev0**. Covers data ingestion + plotting and the inferenc
 axes (models, samplers, likelihoods, distances) with the ABC / ABC-SMC / MCMC / SNPE samplers.
 
 - **Environment:** Docker container `phe_sbi`, Python 3.11.
-- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (183 tests; `-m "not slow"` skips the SNPE training/GPU + mck19 / kilonova fit + benchmark tests).
+- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (189 tests; `-m "not slow"` skips the SNPE training/GPU + mck19 / kilonova fit + benchmark tests).
 
 ## Package map
 
@@ -323,11 +323,14 @@ is numerically gentler than flux space (whose tiny errors make the likelihood ve
 
 ## Notes & limitations (review findings)
 
-- **Metrics vs likelihood:** ABC/ABC-SMC score with the χ² distance, so `AIC`/`BIC`/
-  `max_log_likelihood` are χ²-based — exact for **model comparison on the same data**, but offset by
-  the Gaussian normalization constant in absolute terms. The likelihood layer makes them exact.
-- **ABC-SMC is unweighted** (uniform parent resampling, no importance weights): best-fit + an
-  approximate posterior are reliable; rigorous posterior weights are a planned option.
+- **Metrics are cross-sampler comparable:** ABC/ABC-SMC still *accept* on the flux χ² distance, but
+  their `max_log_likelihood`/`AIC`/`BIC` are now the **exact Gaussian log-likelihood at the best fit** in
+  the data's natural space (`info['likelihood_space']`) — the same convention as MCMC/SNPE — so AIC/BIC
+  can be compared across samplers. (The ABC *posterior* is still set by the flux-space acceptance; only
+  the reported best-fit metric uses the natural-space likelihood.)
+- **ABC-SMC is importance-weighted** (Beaumont 2009 / Toni 2009): weighted resampling + an adaptive
+  diagonal-Gaussian kernel + weights `w_i ∝ π(θ_i)/Σ_j w_j K(θ_i|θ_j)`; the returned posterior is the
+  equal-weight resample, and per-round effective sample size is in `info['rounds']`.
 - **ABC posteriors are approximate** (broadened by the acceptance ε); tighten ε / use SMC for sharper ones.
 - **Toy models** are band-independent analytic forms: `flare` = 0 before explosion; `bazin` computed
   stably in log-space; `gaussian_rise` has a derivative kink at the peak. **`mck19`** is a built-in
@@ -342,7 +345,7 @@ is numerically gentler than flux space (whose tiny errors make the likelihood ve
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `scripts/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (183 tests, all passing)
+## 8. Test coverage (189 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -352,6 +355,7 @@ is numerically gentler than flux space (whose tiny errors make the likelihood ve
 | `test_loader.py` | 12 | AT2017GFO load, window/subset, grouping, `min_snr`, `explosion_date`, upper limits. |
 | `test_plotting.py` | 7 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers; `plot_corner` overlay/legend, common-params + log axes + array/empty errors. |
 | `test_metrics.py` | 4 | WAIC keys + finite + better-fit-lower ordering, `fixed=`/subsampling, and pointwise log-lik (Gaussian + upper-limits) summing to the total. |
+| `test_review_fixes.py` | 6 | scientific-review fixes: ABC exact-likelihood AIC, ABC-SMC importance weighting, WAIC drops draws not data points, mck19 π factor, CCM89 out-of-range clamp, non-positive-flux→mag guard. |
 | `test_priors.py` | 6 | Uniform/LogUniform/Prior sampling, log_prob, rescale, picklability. |
 | `test_models.py` | 8 | flare/bazin/gaussian_rise (incl. flare pre-explosion=0, bazin tail→0), custom model, errors. |
 | `test_distance.py` | 2 | chi² zero/known value. |

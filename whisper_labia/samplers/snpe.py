@@ -289,9 +289,15 @@ class SNPESampler(BaseSampler):
         logls = np.array([
             lik.log_likelihood(predict({nm: float(v) for nm, v in zip(param_names, row)}, times, bands))
             for row in scan], dtype=float)
-        best_idx = int(np.nanargmax(logls))
+        if np.any(np.isfinite(logls)):
+            best_idx = int(np.nanargmax(logls))
+            max_log_likelihood = float(logls[best_idx])
+        else:                                       # every scanned draw gave a non-finite likelihood
+            import warnings
+            warnings.warn("SNPE: all scanned posterior draws have non-finite log-likelihood; "
+                          "AIC/BIC are -inf and best_params is the first draw.", stacklevel=2)
+            best_idx, max_log_likelihood = 0, float("-inf")
         best_params = {nm: float(scan[best_idx][j]) for j, nm in enumerate(param_names)}
-        max_log_likelihood = float(logls[best_idx])
 
         info = {
             "num_rounds": int(num_rounds), "num_simulations": int(num_simulations),

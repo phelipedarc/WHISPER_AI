@@ -416,9 +416,17 @@ def _ccm89_a_lambda(lambda_eff_aa, ebv, rv):
     """
     lam = np.asarray(lambda_eff_aa, dtype=float)
     x = 1.0 / (lam * 1e-4)                       # inverse microns
+    finite = np.isfinite(x)
+    # The CCM89 parametrisation is defined for 0.3 <= x <= 8 um^-1. Outside that (e.g. mid-IR / JWST
+    # F356W, F444W), CLAMP x to the nearest valid edge so the nearest regime is used (as documented),
+    # rather than silently returning A=0. Warn because the clamped value is an extrapolation.
+    out_of_range = finite & ((x < 0.3) | (x > 8.0))
+    if np.any(out_of_range):
+        warnings.warn(f"CCM89: {int(out_of_range.sum())} band(s) outside the valid 0.3-8 um^-1 range; "
+                      "clamping to the nearest regime (extinction there is approximate).", stacklevel=2)
+    x = np.where(finite, np.clip(x, 0.3, 8.0), x)
     a = np.zeros_like(x)
     b = np.zeros_like(x)
-    finite = np.isfinite(x)
     # optical/NIR: 1.1 <= x <= 3.3
     opt = finite & (x >= 1.1) & (x <= 3.3)
     y = x[opt] - 1.82

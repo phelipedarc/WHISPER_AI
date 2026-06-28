@@ -1,22 +1,25 @@
-"""ABC-SMC (Sequential Monte Carlo).
+"""ABC-SMC (Sequential Monte Carlo) — **importance-weighted** (Beaumont et al. 2009; Toni et al. 2009).
 
 Refine a particle population over rounds of shrinking acceptance threshold (epsilon):
 
-* round 0 samples the prior;
-* each later round resamples an accepted particle, perturbs it with a Gaussian kernel, and keeps it
-  if it falls under that round's (tighter) epsilon.
+* round 0 samples the prior (uniform weights);
+* each later round resamples a parent from the **weighted** population, perturbs it with a Gaussian
+  kernel whose (diagonal) covariance is twice the weighted population variance (the Toni 2009 choice),
+  rejects perturbed particles outside the prior, and keeps those under that round's (tighter) epsilon;
+* each kept particle gets an **importance weight** ``w_i ∝ π(θ_i) / Σ_j w_j^{prev} K(θ_i | θ_j^{prev})``.
+  These weights correct the bias the perturbation kernel would otherwise introduce — without them the
+  population converges to a distorted (not the ABC-posterior) distribution.
 
-Far more simulation-efficient than flat rejection at tight thresholds. Improvements over the textbook
-sketch: only the *parameters* are perturbed (not the stored distance), perturbed particles outside the
-prior's support are rejected, and epsilon can be adaptive.
+The returned ``samples`` are the final weighted population **resampled to equal weights**, so downstream
+summaries/plots need no weight handling. Far more simulation-efficient than flat rejection at tight
+thresholds.
 
 Epsilon schedule: pass an explicit ``epsilon_schedule`` list, or leave it ``None`` for an **adaptive**
 schedule where the next round's epsilon = the ``quantile`` (default 0.5) of the current round's
 accepted distances.
 
-Note: this is the **unweighted** SMC variant (parents are resampled uniformly; no importance
-weights). The best fit and an approximate posterior are reliable; for a rigorously weighted posterior,
-importance-weighted ABC-SMC is a planned option.
+Reproducibility: each proposal is seeded by its global ``(seed, round, attempt)`` index, so the
+accepted population (and the final resample) is identical for any ``n_jobs``.
 """
 from __future__ import annotations
 
@@ -27,38 +30,44 @@ from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pandas as pd
+from scipy.special import logsumexp
 
 from ..distance import chi2_distance, get_distance
+from ..likelihood import make_likelihood
 from ..models import get_model
 from .base import BaseSampler, SamplerResult, summarize_posterior
 
+#: Floor on a parameter's perturbation std so a fixed/zero-variance parameter still has a valid kernel.
+_PERTURB_FLOOR = 1e-12
 
-#: Floor added to the Gaussian perturbation scale so a zero-valued parameter still moves.
-_PERTURB_FLOOR = 1e-6
 
-
-def _perturb(particle, scale, rng):
-    """Gaussian kernel: each parameter += N(0, scale*|value| + _PERTURB_FLOOR)."""
-    return {k: v + rng.normal(0.0, scale * abs(v) + _PERTURB_FLOOR) for k, v in particle.items()}
+def _kernel_std(parents_arr, weights):
+    """Diagonal Gaussian kernel std per parameter = sqrt(2 * weighted population variance) (Toni 2009)."""
+    mean = np.average(parents_arr, axis=0, weights=weights)
+    var = np.average((parents_arr - mean) ** 2, axis=0, weights=weights)
+    std = np.sqrt(2.0 * var)
+    return np.where(std > 0, std, _PERTURB_FLOOR)
 
 
 def _smc_batch(args):
     """Try the given **global attempt indices** for one round; each index owns its RNG stream.
 
-    Seeding each attempt by ``default_rng([seed, round, attempt])`` (rather than per worker) makes the
-    proposed particles a function of the global attempt index alone, so the population is identical for
-    any ``n_jobs`` once the accepted particles are ordered by attempt index.
+    Round 0 draws from the prior; later rounds resample a parent from the *weighted* previous population
+    and perturb it with the diagonal Gaussian kernel. Seeding by the global attempt index (not the
+    worker) makes the proposals — and hence the population — independent of ``n_jobs``.
     """
-    (round_idx, parents, prior, perturb_scale, predict, distance,
-     times, bands, obs_flux, obs_err, epsilon, indices, seed) = args
+    (round_idx, parents_arr, parent_weights, param_names, kernel_std, prior,
+     predict, distance, times, bands, obs_flux, obs_err, epsilon, indices, seed) = args
     accepted = []
     for a in indices:
         rng = np.random.default_rng([int(seed), int(round_idx), int(a)])
         if round_idx == 0:
             theta = prior.sample(rng)
         else:
-            theta = _perturb(parents[int(rng.integers(len(parents)))], perturb_scale, rng)
-            if not np.isfinite(prior.log_prob(theta)):   # outside prior support -> reject
+            j = int(rng.choice(len(parent_weights), p=parent_weights))   # weighted resample
+            vec = parents_arr[j] + rng.normal(0.0, kernel_std)           # diagonal Gaussian perturb
+            theta = {nm: float(v) for nm, v in zip(param_names, vec)}
+            if not np.isfinite(prior.log_prob(theta)):                   # outside prior support -> reject
                 continue
         sim = np.asarray(predict(theta, times, bands), dtype=float)
         d = distance(obs_flux, obs_err, sim, bands)
@@ -70,15 +79,28 @@ def _smc_batch(args):
     return accepted, len(indices)
 
 
+def _importance_log_weights(theta_new, param_names, parents_arr, parent_log_weights, kernel_std, prior):
+    """Log importance weights ``ln w_i = ln π(θ_i) - ln Σ_j w_j K(θ_i|θ_j)`` (normalised), in log-space."""
+    new_arr = np.array([[t[p] for p in param_names] for t in theta_new], dtype=float)   # (M, D)
+    log_k_norm = -np.sum(np.log(kernel_std)) - 0.5 * len(param_names) * np.log(2.0 * np.pi)
+    log_w = np.empty(len(theta_new), dtype=float)
+    for i in range(len(theta_new)):
+        diff = (new_arr[i] - parents_arr) / kernel_std                  # (N, D)
+        log_kernel = log_k_norm - 0.5 * np.sum(diff * diff, axis=1)     # (N,)  K(θ_i | θ_j)
+        denom = logsumexp(parent_log_weights + log_kernel)             # ln Σ_j w_j K(θ_i|θ_j)
+        log_w[i] = float(prior.log_prob(theta_new[i])) - denom
+    return log_w - logsumexp(log_w)                                     # normalise
+
+
 class ABCSMCSampler(BaseSampler):
-    """Sequential Monte Carlo ABC over rounds of shrinking epsilon (see the module docstring)."""
+    """Importance-weighted Sequential Monte Carlo ABC over rounds of shrinking epsilon."""
 
     name = "abc_smc"
 
     def fit(self, lc, model, prior=None, *, n_particles=500, n_rounds=5, epsilon_schedule=None,
             quantile=0.5, perturbation_scale=0.1, distance=chi2_distance, n_jobs=None, seed=0,
             max_attempts_per_round=None):
-        """Fit ``lc`` with ``model`` via ABC-SMC, returning a :class:`SamplerResult`.
+        """Fit ``lc`` with ``model`` via importance-weighted ABC-SMC, returning a :class:`SamplerResult`.
 
         Parameters
         ----------
@@ -98,7 +120,8 @@ class ABCSMCSampler(BaseSampler):
         quantile : float, default 0.5
             Adaptive-epsilon quantile (ignored when ``epsilon_schedule`` is given).
         perturbation_scale : float, default 0.1
-            Gaussian perturbation kernel scale (fraction of each parameter value).
+            Retained for backward compatibility; the kernel covariance is now set adaptively from the
+            weighted population (Toni 2009), so this value is unused.
         distance : callable, default :func:`chi2_distance`
             ``f(obs_flux, obs_err, sim_flux, bands) -> float``; picklable for ``n_jobs > 1``.
         n_jobs : int, optional
@@ -113,8 +136,9 @@ class ABCSMCSampler(BaseSampler):
         Returns
         -------
         SamplerResult
-            Posterior samples + summary, ``best_params``, ``aic``/``bic``, and per-round diagnostics
-            in ``info['rounds']``.
+            Equal-weight posterior samples + summary, ``best_params``, ``aic``/``bic`` (from the exact
+            Gaussian log-likelihood at the best fit — comparable across samplers), and per-round
+            diagnostics in ``info['rounds']``.
         """
         model = get_model(model)
         distance = get_distance(distance)
@@ -140,7 +164,10 @@ class ABCSMCSampler(BaseSampler):
         batch = max(n_particles // n_jobs, 200)
 
         t0 = time.perf_counter()
-        parents = None
+        parents_arr = None            # (N, D) population parameters of the previous round
+        parent_weights = None         # (N,)   normalised linear weights (for resampling)
+        parent_log_weights = None     # (N,)   normalised log weights (for the weight recursion)
+        kernel_std = None
         population = []
         round_info = []
         total_attempts = 0
@@ -154,8 +181,8 @@ class ABCSMCSampler(BaseSampler):
                 while len(accepted) < n_particles and next_attempt < max_attempts_per_round:
                     block = np.arange(next_attempt, next_attempt + n_jobs * batch)
                     idx_chunks = [c for c in np.array_split(block, n_jobs) if len(c)]
-                    args = [(round_idx, parents, prior, perturbation_scale, predict, distance,
-                             times, bands, obs_flux, obs_err, epsilon, idx, seed)
+                    args = [(round_idx, parents_arr, parent_weights, params, kernel_std, prior,
+                             predict, distance, times, bands, obs_flux, obs_err, epsilon, idx, seed)
                             for idx in idx_chunks]
                     results = [_smc_batch(args[0])] if pool is None else list(pool.map(_smc_batch, args))
                     for acc, _ in results:
@@ -171,8 +198,21 @@ class ABCSMCSampler(BaseSampler):
                         f"after {attempts} attempts (epsilon={epsilon:g}).", stacklevel=2)
                 population = [{k: v for k, v in r.items() if k != "_attempt"}
                              for r in accepted[:n_particles]]
+                theta_pop = [{k: p[k] for k in params} for p in population]
+                pop_arr = np.array([[t[p] for p in params] for t in theta_pop], dtype=float) \
+                    if theta_pop else np.empty((0, len(params)))
+
+                # Importance weights: uniform at round 0, otherwise the SMC recursion (corrects the kernel).
+                if round_idx == 0 or parents_arr is None or len(theta_pop) == 0:
+                    log_w = np.full(len(theta_pop), -np.log(max(len(theta_pop), 1)))
+                else:
+                    log_w = _importance_log_weights(theta_pop, params, parents_arr,
+                                                    parent_log_weights, kernel_std, prior)
+                weights = np.exp(log_w - logsumexp(log_w)) if len(log_w) else np.array([])
+
                 dists = (np.array([p["distance"] for p in population]) if population
                          else np.array([np.inf]))
+                ess = float(1.0 / np.sum(weights ** 2)) if len(weights) else 0.0
                 round_info.append({
                     "round": round_idx + 1,
                     "epsilon": (float(epsilon) if np.isfinite(epsilon) else None),
@@ -180,34 +220,57 @@ class ABCSMCSampler(BaseSampler):
                     "attempts": int(attempts),
                     "acceptance_rate": float(len(population) / attempts) if attempts else 0.0,
                     "best_distance": float(dists.min()),
+                    "effective_sample_size": ess,
                 })
-                parents = [{k: p[k] for k in params} for p in population]   # param-only for perturbation
+                # Prepare the next round: weighted population + adaptive kernel covariance.
+                parents_arr = pop_arr
+                parent_log_weights = log_w
+                parent_weights = weights
+                kernel_std = _kernel_std(pop_arr, weights) if len(weights) else None
                 if epsilon_schedule is None and round_idx + 1 < n_rounds:
                     epsilon = float(np.quantile(dists, quantile))
         finally:
             if pool is not None:
                 pool.shutdown()
+
+        # Resample the final weighted population to EQUAL weights so downstream code needs no weights.
+        if len(population):
+            ridx = np.random.default_rng([int(seed), 10_000]).choice(
+                len(population), size=len(population), replace=True, p=parent_weights)
+            resampled = [{k: population[i][k] for k in params + ["distance"]} for i in ridx]
+        else:
+            resampled = []
         runtime = time.perf_counter() - t0
 
-        samples = pd.DataFrame(population, columns=params + ["distance"])
-        distances = samples["distance"].to_numpy(dtype=float) if len(samples) else np.array([np.inf])
+        samples = pd.DataFrame(resampled, columns=params + ["distance"])
+        distances = (np.array([p["distance"] for p in population], dtype=float)
+                     if population else np.array([np.inf]))
         chi2_min = float(distances.min())
         k, n = len(params), lc.n_points
-        best = ({p: float(samples.iloc[int(np.argmin(distances))][p]) for p in params}
-                if len(samples) else {})
+        # Best fit = lowest-distance particle; metrics from the exact Gaussian log-likelihood there, in
+        # the data's natural space, so AIC/BIC are COMPARABLE ACROSS SAMPLERS (chi2 alone drops the
+        # Gaussian normalisation and is flux-only).
+        best, max_log_likelihood = {}, float("nan")
+        if population:
+            best = {p: float(population[int(np.argmin(distances))][p]) for p in params}
+            lik = make_likelihood(lc)
+            max_log_likelihood = float(
+                lik.log_likelihood(np.asarray(predict(best, times, bands), dtype=float)))
         info = {
             "n_particles": int(n_particles), "n_rounds": int(n_rounds),
             "rounds": round_info, "total_simulations": int(total_attempts),
-            "perturbation_scale": float(perturbation_scale),
+            "weighted": True, "kernel": "diagonal_gaussian_2x_weighted_var",
             "quantile": None if epsilon_schedule is not None else float(quantile),
             "n_jobs": int(n_jobs), "distance": getattr(distance, "__name__", str(distance)),
+            "likelihood_space": make_likelihood(lc).space if population else None,
         }
         return SamplerResult(
             sampler="abc_smc", model=model.name, parameters=params,
             samples=samples, summary=summarize_posterior(samples, params), best_params=best,
             n_data=n, n_params=k, runtime_s=runtime, info=info,
-            min_distance=chi2_min, max_log_likelihood=-0.5 * chi2_min,
-            aic=float(chi2_min + 2 * k), bic=float(chi2_min + k * np.log(n)),
+            min_distance=chi2_min, max_log_likelihood=max_log_likelihood,
+            aic=float(-2.0 * max_log_likelihood + 2 * k),
+            bic=float(-2.0 * max_log_likelihood + k * np.log(n)),
         )
 
 

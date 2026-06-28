@@ -55,6 +55,10 @@ class GaussianLikelihood:
     def model_in_space(self, model_flux):
         mf = np.asarray(model_flux, dtype=float)
         if self.space == "magnitude":
+            # A non-positive model flux has no magnitude; clip to a tiny floor so it maps to a very
+            # faint magnitude (~+759) -> a large but FINITE chi-square penalty. This keeps the
+            # log-likelihood finite (so it effectively rejects, rather than NaN-ing, such draws) and
+            # avoids spurious non-finite values that would otherwise be dropped by WAIC.
             return flux_density_to_mag(np.clip(mf, _MIN_FLUX_JY, None), zeropoint_jy=self.zeropoint_jy)
         return mf
 

@@ -126,8 +126,11 @@ def _ab_mag_blackbody(lambda_obs_aa, temperature, r_emit_cm, dl_cm, z):
     lam_obs_cm = np.asarray(lambda_obs_aa, dtype=float) * 1e-8
     lam_rest_cm = lam_obs_cm / (1.0 + z)
     x = np.clip(_H_CGS * _C_CGS / (lam_rest_cm * _KB_CGS * temperature), None, _EXP_CLIP)
-    b_lambda = (2.0 * _H_CGS * _C_CGS**2 / lam_rest_cm**5) / np.expm1(x)   # per-cm spectral radiance
-    f_lambda_obs = b_lambda * (r_emit_cm / dl_cm) ** 2 / (1.0 + z)
+    b_lambda = (2.0 * _H_CGS * _C_CGS**2 / lam_rest_cm**5) / np.expm1(x)   # specific intensity B_lambda
+    # Observed flux of a uniform sphere radius r at distance D: F = pi*B*(r/D)^2 (the pi converts
+    # specific intensity B to the emergent surface flux pi*B). Darc 2025 / the reference omit this pi,
+    # making every predicted flux a factor of pi (~1.24 mag) too faint; restore it for physical fluxes.
+    f_lambda_obs = np.pi * b_lambda * (r_emit_cm / dl_cm) ** 2 / (1.0 + z)
     f_nu = f_lambda_obs * lam_obs_cm**2 / _C_CGS                          # erg s^-1 cm^-2 Hz^-1
     f_nu_jy = np.maximum(f_nu / _JY_CGS, 1e-300)
     return -2.5 * np.log10(f_nu_jy / _AB_ZP_JY)

@@ -11,6 +11,8 @@ Lower WAIC is better. WAIC ``= -2 (lppd - p_waic)`` with
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from scipy.special import logsumexp
 
@@ -67,9 +69,13 @@ def waic(posterior, lc, model=None, *, space="auto", likelihood="auto", fixed=No
         raise ValueError("No model given and the posterior has no .model; pass model=...")
     names = list(model.parameters) if names is None else names
 
-    if samples.shape[0] > max_samples:
-        sel = np.random.default_rng(seed).choice(samples.shape[0], size=max_samples, replace=False)
+    n_total = samples.shape[0]
+    subsampled = n_total > max_samples
+    if subsampled:
+        sel = np.random.default_rng(seed).choice(n_total, size=max_samples, replace=False)
         samples = samples[sel]
+        warnings.warn(f"WAIC: posterior has {n_total} draws; evaluated a random {max_samples}-draw "
+                      "subsample (raise max_samples for the full set).", stacklevel=2)
 
     lik = make_likelihood(lc, kind=likelihood, space=space)
     if not hasattr(lik, "log_likelihood_pointwise"):
@@ -82,10 +88,18 @@ def waic(posterior, lc, model=None, *, space="auto", likelihood="auto", fixed=No
         np.asarray(lik.log_likelihood_pointwise(
             model.predict({**extra, **{nm: float(v) for nm, v in zip(names, row)}}, times, bands)), float)
         for row in samples])                                   # (n_samples, n_data)
-    keep = np.all(np.isfinite(ll), axis=0)                     # drop points any draw made non-finite
-    ll = ll[:, keep]
-    if ll.size == 0:
-        raise ValueError("All pointwise log-likelihoods are non-finite; cannot compute WAIC.")
+    # Drop non-finite *draws* (rows), NOT data points (columns): WAIC is a sum over data points, so
+    # every model in a comparison must be scored on the SAME points. Dropping a column when a single
+    # bad draw makes it non-finite would shrink the dataset model-dependently and invalidate ΔWAIC.
+    good = np.all(np.isfinite(ll), axis=1)
+    n_dropped = int((~good).sum())
+    if n_dropped:
+        warnings.warn(f"WAIC: dropped {n_dropped}/{ll.shape[0]} posterior draws with a non-finite "
+                      f"pointwise log-likelihood (all {ll.shape[1]} data points retained).", stacklevel=2)
+    ll = ll[good]
+    if ll.shape[0] < 2:
+        raise ValueError("WAIC needs >= 2 posterior draws with finite pointwise log-likelihoods; "
+                         f"only {ll.shape[0]} of {good.size} qualified.")
 
     n_samp = ll.shape[0]
     lppd_i = logsumexp(ll, axis=0) - np.log(n_samp)            # log mean-likelihood per point
@@ -94,4 +108,5 @@ def waic(posterior, lc, model=None, *, space="auto", likelihood="auto", fixed=No
     n_data = ll.shape[1]
     se = float(np.sqrt(n_data * np.var(-2.0 * elpd_i, ddof=1))) if n_data > 1 else float("nan")
     return {"waic": float(-2.0 * np.sum(elpd_i)), "lppd": float(np.sum(lppd_i)),
-            "p_waic": float(np.sum(p_waic_i)), "se": se, "n_samples": int(n_samp), "n_data": int(n_data)}
+            "p_waic": float(np.sum(p_waic_i)), "se": se, "n_samples": int(n_samp), "n_data": int(n_data),
+            "n_draws_dropped": n_dropped, "subsampled": bool(subsampled)}

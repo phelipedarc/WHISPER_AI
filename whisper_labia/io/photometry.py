@@ -7,6 +7,8 @@ only need internally consistent, invertible conversions with correct error propa
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 AB_ZEROPOINT_JY = 3631.0
@@ -26,13 +28,22 @@ def mag_to_flux_density(magnitude, magnitude_err=None, zeropoint_jy=AB_ZEROPOINT
 
 
 def flux_density_to_mag(flux, flux_err=None, zeropoint_jy=AB_ZEROPOINT_JY):
-    """Convert flux density (Jy) to AB magnitude. Returns ``mag`` or ``(mag, mag_err)``."""
+    """Convert flux density (Jy) to AB magnitude. Returns ``mag`` or ``(mag, mag_err)``.
+
+    Non-positive flux densities have no AB magnitude (``log10`` of <= 0): they map to ``NaN`` (with a
+    warning) rather than a silent NaN/negative-error pair. Keep such data in flux space instead.
+    """
     flux = np.asarray(flux, dtype=float)
-    magnitude = -2.5 * np.log10(flux / zeropoint_jy)
-    if flux_err is None:
-        return magnitude
-    flux_err = np.asarray(flux_err, dtype=float)
-    magnitude_err = (2.5 / _LN10) * (flux_err / flux)
+    bad = ~(flux > 0)
+    if np.any(bad):
+        warnings.warn(f"flux_density_to_mag: {int(np.sum(bad))} non-positive flux value(s) have no AB "
+                      "magnitude -> NaN (keep such data in flux space).", stacklevel=2)
+    safe = np.where(bad, np.nan, flux)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        magnitude = -2.5 * np.log10(safe / zeropoint_jy)
+        if flux_err is None:
+            return magnitude
+        magnitude_err = (2.5 / _LN10) * (np.asarray(flux_err, dtype=float) / safe)
     return magnitude, magnitude_err
 
 

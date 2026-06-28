@@ -5,6 +5,28 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Scientific-review fixes (physical + Bayesian correctness)
+A systematic, adversarially-verified review (physical consistency, Bayesian rigor, numerics) fixed:
+- **Cross-sampler AIC/BIC now comparable.** ABC/ABC-SMC previously reported `-2 lnL` from the bare
+  flux χ² (Gaussian normalisation dropped, flux-only), so their AIC/BIC were on a different scale than
+  MCMC/SNPE — invalidating any model-selection table that mixed samplers. They now evaluate the **exact
+  Gaussian log-likelihood at the best fit** in the data's natural space (`info['likelihood_space']`).
+- **ABC-SMC is now importance-weighted** (Beaumont 2009 / Toni 2009): weighted resampling, an adaptive
+  diagonal-Gaussian kernel (2× weighted population variance), and weights
+  `w_i ∝ π(θ_i)/Σ_j w_j K(θ_i|θ_j)`; the equal-weight resampled posterior is returned and per-round
+  effective sample size is recorded. The old **unweighted** variant biased the posterior.
+- **`mck19` blackbody was missing a factor of π** (`F = πB(R/D)²`) — every predicted flux was π (~1.24
+  mag) too faint (an error inherited from the reference). Fixed.
+- **WAIC now drops non-finite *draws*, not data *points*** — a single bad draw no longer removes an
+  entire data point, which had made ΔWAIC between models incomparable (different `n_data`); returns
+  `n_draws_dropped` and `subsampled` and warns on both.
+- **MCMC AIC/BIC use the max-*likelihood* draw**, not the max-*posterior* draw (these differ under a
+  LogUniform prior); plus a convergence warning when `nsteps < 50·τ` (`info['converged']`).
+- **CCM89 extinction clamps** out-of-range bands to the nearest regime (was silently `A=0`, e.g. for
+  JWST/mid-IR) with a warning; `flux_density_to_mag` returns `NaN` + warns on non-positive flux (was a
+  silent NaN with a sign-flipped error); SNPE guards an all-non-finite likelihood scan; ABC warns on an
+  empty (0-accepted) posterior; the magnitude-space flux floor is documented.
+
 ### `plot_corner` + WAIC
 - **`wp.plot_corner(posteriors, ...)`** — a built-in, documented corner plot for **overlaying a list of
   posteriors** (SamplerResults, DataFrames, dicts, or arrays) on one publication-ready figure: shared
@@ -173,4 +195,4 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 - pip-installable from GitHub; relaxed dependency pins (no forced numpy/scipy downgrade); redback is an
   optional `[models]` extra — Phase-1 data + plotting + ABC run with no redback and no compiler.
 - Tutorial, API reference, design rationale, extensibility + contributing guides, an AT2017GFO
-  model-comparison report, and a quick-start notebook. LICENSE (GPL-3.0), CITATION.cff, py.typed. 183 tests (redback-backed model + benchmark tests skip without the [models] extra).
+  model-comparison report, and a quick-start notebook. LICENSE (GPL-3.0), CITATION.cff, py.typed. 189 tests (redback-backed model + benchmark tests skip without the [models] extra).

@@ -18,6 +18,7 @@ posterior.
 from __future__ import annotations
 
 import time
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -132,21 +133,33 @@ class MCMCSampler(BaseSampler):
         flat_lp = sampler.get_log_prob(discard=int(burnin), thin=int(thin), flat=True)
         samples = pd.DataFrame(flat, columns=names)
 
-        best_idx = int(np.argmax(flat_lp))
+        # AIC/BIC use the maximum *likelihood*, not the maximum *posterior*. log_prob = prior + ll, so
+        # recover the per-draw log-likelihood ll = log_prob - prior.log_prob and take its argmax. (For a
+        # flat/Uniform prior these coincide; for a LogUniform prior they differ, which would bias AIC/BIC.)
+        prior_lp = np.array([prior.log_prob({nm: float(flat[i, j]) for j, nm in enumerate(names)})
+                             for i in range(flat.shape[0])], dtype=float)
+        flat_ll = flat_lp - prior_lp
+        best_idx = int(np.nanargmax(flat_ll)) if np.any(np.isfinite(flat_ll)) else int(np.argmax(flat_lp))
         best_params = {nm: float(flat[best_idx, j]) for j, nm in enumerate(names)}
-        max_log_likelihood = float(
-            lik.log_likelihood(np.asarray(predict(best_params, times, bands), dtype=float)))
+        max_log_likelihood = float(flat_ll[best_idx])
 
         try:
             autocorr = float(np.nanmean(sampler.get_autocorr_time(tol=0)))
         except Exception:                                         # pragma: no cover - short chains
             autocorr = float("nan")
+        # Convergence guard: warn if the chain is too short relative to its autocorrelation time, since
+        # CIs and AIC/BIC from an unconverged / heavily autocorrelated chain are unreliable.
+        converged = True
+        if np.isfinite(autocorr) and autocorr > 0 and nsteps < 50.0 * autocorr:
+            converged = False
+            warnings.warn(f"MCMC may be under-converged: nsteps={nsteps} < 50*tau (tau~{autocorr:.0f}); "
+                          "increase nsteps/burnin and re-check posterior CIs and AIC/BIC.", stacklevel=2)
         info = {
             "nwalkers": int(nwalkers), "nsteps": int(nsteps), "burnin": int(burnin), "thin": int(thin),
             "space": lik.space, "likelihood": type(lik).__name__,
             "mean_acceptance_fraction": float(np.mean(sampler.acceptance_fraction)),
             "mean_autocorr_time": autocorr, "n_samples_per_walker": int(flat.shape[0] // nwalkers),
-            "seed": int(seed),
+            "converged": bool(converged), "seed": int(seed),
         }
         result = SamplerResult(
             sampler="mcmc", model=model.name, parameters=list(names), samples=samples,
