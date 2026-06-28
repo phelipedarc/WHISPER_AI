@@ -95,7 +95,9 @@ sampler at once (`scripts/corner_kilonova_benchmark.py`, via the built-in `wp.pl
 The ABC / MCMC / SNPE (CPU) / SNPE (GPU) posteriors overlap in the same region of ejecta space — the
 methods are mutually consistent — with MCMC the tightest. (`wp.waic` adds a fully-Bayesian fit score;
 note it is numerically unstable for the broad ABC / under-converged SNPE posteriors here — `p_waic`
-≫ #parameters — so it is reported as a diagnostic, not a clean ranking.)
+≫ #parameters — so it is reported as a diagnostic, not a clean ranking.) The **flux-space** version
+(`docs/figures/at2017gfo_corner_flux.png`, `python scripts/corner_kilonova_benchmark.py flux`) tells the
+same story.
 
 ## SNPE on GPU vs CPU
 
