@@ -55,25 +55,31 @@ adding any axis member is ~1 function and needs no edits elsewhere.
 ## 4. Known limitations
 
 - **ABC posteriors are approximate** (broadened by the acceptance ε); tighten ε or use ABC-SMC.
-- **ABC-SMC is unweighted** (uniform parent resampling, no importance weights): best-fit + an
-  approximate posterior are reliable; rigorously weighted posteriors are planned.
-- **Likelihoods are not yet wired into the samplers' acceptance.** ABC/ABC-SMC score with the χ²
-  distance (flux space, requires errors); SNPE uses a Gaussian noise model. Selecting
-  `GaussianLikelihoodWithUpperLimits` / `MixtureGaussianLikelihood` per fit is a planned `likelihood=`
-  parameter (see §5).
-- **Metrics are χ²-based for ABC:** `AIC`/`BIC`/`max_log_likelihood` are exact for *model comparison on
-  the same data* but offset by the Gaussian normalization constant in absolute terms.
-- **Built-in models are analytic and band-independent** (`flare`, `bazin`, `gaussian_rise`); physical,
-  band-dependent models come from redback via the `[models]` extra.
-- **`calc_absmag` extinction** uses the CCM89 law and applies no Vega→AB offsets for NIR bands; host
-  extinction beyond an explicit `extinction` dict is not modeled.
+- **ABC acceptance is flux-χ² only.** ABC/ABC-SMC still *accept* on the flux-space χ² distance (requires
+  errors); selecting `GaussianLikelihoodWithUpperLimits` / `MixtureGaussianLikelihood` or a magnitude
+  space for the *acceptance* is a planned `likelihood=` / `space=` parameter (see §5). The reported
+  `AIC`/`BIC`/`max_log_likelihood`, however, now use the **exact Gaussian log-likelihood at the best fit**
+  in the data's natural space — the same convention as MCMC/SNPE, so they are **comparable across
+  samplers** (`info['likelihood_space']`).
+- **Built-in models** are the analytic toys (`flare`, `bazin`, `gaussian_rise`), the physical
+  band-dependent **`mck19`** (BBH-in-AGN flare), and the redback-backed **`two_component_kilonova`**
+  (`[models]` extra); further physical models come from redback.
+- **`calc_absmag` extinction** uses the CCM89 law (clamped to its 0.3–8 µm⁻¹ validity, with a warning
+  for out-of-range bands) and applies no Vega→AB offsets for NIR bands; host extinction beyond an
+  explicit `extinction` dict is not modeled.
+- **WAIC is posterior-quality-sensitive:** `p_waic` (and hence WAIC) inflates for posteriors much
+  broader than the likelihood (ABC tolerance / under-converged SNPE) — a useful diagnostic, but treat
+  WAIC as reliable only for well-converged posteriors (a robust PSIS-LOO is a possible addition).
 - **SVO mapping** uses a ±5% wavelength window and documented default filter IDs; ambiguous matches warn
   and pick the closest, which may not be the intended filter — override with `register_manual_band`.
 
 ## 5. Planned extensions
 
-- `likelihood=` / `space=` on every sampler (route `make_likelihood` into acceptance; exact −2 ln L).
-- Unified sampler keyword names across ABC/ABC-SMC/SNPE (with deprecation aliases).
-- Likelihood-based samplers: MCMC (emcee) and nested sampling (Dynesty).
+- `likelihood=` / `space=` routed into the ABC/ABC-SMC **acceptance** (not just the reported metric).
+- Unified sampler keyword names across ABC/ABC-SMC/MCMC/SNPE (with deprecation aliases).
+- Nested sampling (Dynesty) for direct evidence; PSIS-LOO as a robust complement to WAIC.
 - Full type-hint coverage across all internal modules (the public surface is annotated and `py.typed`).
-- Importance-weighted ABC-SMC; redback model adapters; a `fit_all` grid (transient × model × sampler).
+- More redback model adapters; a `fit_all` grid (transient × model × sampler) with a comparison report.
+
+*Delivered since the first draft: MCMC (emcee), importance-weighted ABC-SMC, the `mck19` and
+`two_component_kilonova` models, GPU SNPE, `plot_corner`, and `waic`.*

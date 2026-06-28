@@ -400,14 +400,52 @@ res = wp.fit_SNPE(
 - **`proposal_mode='restricted'`** — truncated SNPE (`RestrictedPrior` + `get_density_thresholder`),
   sometimes more robust than the default SNPE-C. It rejection-samples the restricted prior, so it can be
   **compute-heavy** — give it enough `num_simulations` and keep `support_samples` modest.
+- **`device`** — train on a GPU: `'cpu'` (default), `'cuda'` / `'gpu'` / `'cuda:N'`, or **`'auto'`**
+  (CUDA when available, else CPU; a GPU request with no CUDA warns and falls back). The GPU accelerates
+  the neural-net *training*, not the (CPU) simulator, so it pays off most with many simulations /
+  large networks — `scripts/benchmark_snpe_device.py` measures ~7–10× speed-ups (see
+  [`docs/BENCHMARK.md`](BENCHMARK.md)).
+
+```python
+res = wp.fit_SNPE(lc, "two_component_kilonova", device="auto", num_rounds=2, num_simulations=2000)
+```
 
 > `snpe` needs the optional `[sbi]` extra (`pip install 'whisper-labia[sbi]'`, adds `sbi` + `torch`).
 > Runnable: [`scripts/demo_snpe.py`](../scripts/demo_snpe.py) and the notebook
 > [`examples/at2017gfo_quickstart.ipynb`](../examples/at2017gfo_quickstart.ipynb). Training is the slow
 > part — its tests are marked `slow` (`pytest -m "not slow"` skips them).
 
+## 9. Compare posteriors & select models — `plot_corner` and `waic`
+
+Every sampler returns a `SamplerResult` with the same interface, so comparing them is easy. To judge
+whether methods are **compatible**, overlay their posteriors (a table of medians hides the uncertainty):
+
+```python
+fig = wp.plot_corner(
+    [res_abc, res_mcmc, res_snpe],                       # any SamplerResult / DataFrame / dict / array
+    labels=["ABC", "MCMC", "SNPE"], log_params=["mej_1"], # log axes for wide-range parameters
+    truths={"amplitude": 5.0}, title="AT2017GFO posteriors", save="corner.png")
+```
+
+It uses a dark, colourblind-distinct palette (`wp.CORNER_PALETTE`), shared axis ranges, contour lines +
+filled marginals, and a legend — publication-ready. See [`docs/BENCHMARK.md`](BENCHMARK.md) for the
+four-sampler AT2017GFO corner.
+
+For **model selection**, `AIC`/`BIC` on each result are now computed from the exact Gaussian likelihood
+and are comparable across samplers (lower = better). For a fully-Bayesian score that uses the *whole*
+posterior, use **WAIC**:
+
+```python
+w = wp.waic(res, lc, model="two_component_kilonova", fixed={"redshift": 0.00984})
+w["waic"], w["p_waic"]   # lower WAIC is better; p_waic is the effective number of parameters
+```
+
+WAIC is most reliable for well-converged posteriors — `p_waic` inflates for very broad ones (ABC's
+tolerance posterior, an under-trained SNPE), which is itself a useful warning sign.
+
 ## What's next
 
-Next: wire likelihoods into the samplers (flux/magnitude space + upper limits in inference), then a
-**likelihood-based sampler** (MCMC / Dynesty). Physical models + priors can optionally be plugged in
-from the external redback package (the `[models]` extra) — an auxiliary source of models and priors only.
+Planned: route `likelihood=` / `space=` into the ABC/ABC-SMC **acceptance** (not just the reported
+metric), nested sampling (Dynesty) for direct evidence, and a `fit_all` transient × model × sampler
+grid. Physical models + priors can be plugged in from the external redback package (the `[models]`
+extra); `two_component_kilonova` is the first such model.

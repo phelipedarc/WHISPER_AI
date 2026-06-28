@@ -301,8 +301,10 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 | `MixtureGaussianLikelihood(lc, space="auto", alpha=0.9, sigma_out_scale=10.0)` | Outlier-robust two-component mixture (α, σ_out fixed). |
 | `make_likelihood(lc, kind="auto", space="auto", **kw)` | Build the data-appropriate likelihood (auto-selects upper-limits when present). |
 
-> Status: implemented + tested but **not yet wired into the samplers** (ABC/ABC-SMC currently score
-> with `chi2_distance`). Adding `likelihood=` / `space=` to the samplers is the next step.
+> Status: **MCMC and SNPE** use this likelihood directly for both sampling and metrics; **ABC/ABC-SMC**
+> still *accept* on `chi2_distance` (flux space) but now compute `AIC`/`BIC`/`max_log_likelihood` from
+> this exact likelihood at the best fit (so metrics are comparable across samplers). Routing
+> `likelihood=` / `space=` into the ABC *acceptance* itself is the remaining step.
 
 Each Gaussian likelihood also exposes **`log_likelihood_pointwise(model_flux) -> array`** (the per-data-
 point log-likelihood, summing to `log_likelihood`) — the ingredient WAIC needs.
