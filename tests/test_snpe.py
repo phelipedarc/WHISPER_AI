@@ -124,6 +124,47 @@ def test_snpe_dispatch_and_alias_multiround():
     assert res.n_samples == 300
 
 
+def test_resolve_device_auto_gpu_and_fallback():
+    """`_resolve_device` maps auto/gpu/cuda/cpu and falls back (with a warning) when CUDA is absent."""
+    from whisper_labia.samplers.snpe import _resolve_device
+
+    class _Cuda:
+        def __init__(self, ok): self._ok = ok
+        def is_available(self): return self._ok
+
+    class _Torch:
+        def __init__(self, ok): self.cuda = _Cuda(ok)
+
+    have, none = _Torch(True), _Torch(False)
+    assert _resolve_device("auto", have) == "cuda"
+    assert _resolve_device("gpu", have) == "cuda"
+    assert _resolve_device("cuda:2", have) == "cuda:2"
+    assert _resolve_device("cpu", have) == "cpu"
+    assert _resolve_device("auto", none) == "cpu"
+    with pytest.warns(UserWarning, match="CUDA is unavailable"):
+        assert _resolve_device("cuda", none) == "cpu"
+
+
+@pytest.mark.slow
+def test_snpe_gpu_recovers():
+    """SNPE trains on the GPU (prior + observed data on-device) and recovers the injection."""
+    pytest.importorskip("sbi")
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("no CUDA device available")
+    m = get_model("gaussian_rise")
+    true = {"amplitude": 5.0, "t0": 8.0, "sigma_rise": 3.0, "tau_decay": 15.0}
+    t = np.linspace(0.1, 30, 50)
+    flux = m.predict(true, t, None)
+    obs = flux + np.random.default_rng(0).normal(0, 0.1, flux.shape)
+    lc = wp.LightCurve(time=t, band=["r"] * 50, flux=obs, flux_err=np.full_like(flux, 0.1), name="syn")
+    res = wp.fit_SNPE(lc, "gaussian_rise", num_rounds=1, num_simulations=400, num_samples=600,
+                      space="flux", device="cuda", seed=0, max_num_epochs=60)
+    assert res.info["device"].startswith("cuda")
+    assert np.isfinite(res.aic)
+    assert abs(res.summary["amplitude"]["median"] - 5.0) / 5.0 < 0.5
+
+
 @pytest.mark.slow
 def test_snpe_embedding_net_and_custom_estimator():
     """A custom embedding net and custom density-estimator architecture both run end-to-end."""

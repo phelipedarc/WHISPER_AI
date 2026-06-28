@@ -1,0 +1,68 @@
+[
+  {
+    "num_sim": 500,
+    "num_rounds": 1,
+    "total": 500,
+    "cpu_runtime_s": 87.64519146084785,
+    "cpu_estimated": false,
+    "gpu_runtime_s": 13.08503583446145,
+    "gpu_device": "cuda",
+    "speedup": 6.698123915719114,
+    "recov_err": 0.5889017870028814
+  },
+  {
+    "num_sim": 2000,
+    "num_rounds": 1,
+    "total": 2000,
+    "cpu_runtime_s": 392.4094801209867,
+    "cpu_estimated": false,
+    "gpu_runtime_s": 45.315519876778126,
+    "gpu_device": "cuda",
+    "speedup": 8.659494168620945,
+    "recov_err": 0.6185797303915024
+  },
+  {
+    "num_sim": 8000,
+    "num_rounds": 1,
+    "total": 8000,
+    "cpu_runtime_s": 1569.6379204839468,
+    "cpu_estimated": true,
+    "gpu_runtime_s": 176.64861607551575,
+    "gpu_device": "cuda",
+    "speedup": 8.885650821136013,
+    "recov_err": 0.028056372702121732
+  },
+  {
+    "num_sim": 20000,
+    "num_rounds": 1,
+    "total": 20000,
+    "cpu_runtime_s": 3924.094801209867,
+    "cpu_estimated": true,
+    "gpu_runtime_s": 445.615053281188,
+    "gpu_device": "cuda",
+    "speedup": 8.806019393455543,
+    "recov_err": 0.023657813171545663
+  },
+  {
+    "num_sim": 50000,
+    "num_rounds": 1,
+    "total": 50000,
+    "cpu_runtime_s": 9810.237003024668,
+    "cpu_estimated": true,
+    "gpu_runtime_s": 995.9794332571328,
+    "gpu_device": "cuda",
+    "speedup": 9.84983893788091,
+    "recov_err": 0.0044232398271560665
+  },
+  {
+    "num_sim": 20000,
+    "num_rounds": 2,
+    "total": 40000,
+    "cpu_runtime_s": 7848.189602419734,
+    "cpu_estimated": true,
+    "gpu_runtime_s": 2046.98457576707,
+    "gpu_device": "cuda",
+    "speedup": 3.8340247871573574,
+    "recov_err": 0.02065206070741018
+  }
+]

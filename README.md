@@ -11,7 +11,7 @@ pluggable: you can register your own, or optionally pull them from the external
 auxiliary dependency used *only* as a source of models and priors — Whisper does not otherwise rely on it.
 
 > **Status:** early development. Data ingestion (with astropy units, redshift handling, and SVO band
-> resolution), plotting, and the **ABC / ABC-SMC / MCMC / SNPE** samplers are done and tested (**172 unit
+> resolution), plotting, and the **ABC / ABC-SMC / MCMC / SNPE** samplers are done and tested (**177 unit
 > tests**). Nested sampling (Dynesty) and likelihood-in-the-loop ABC come next
 > (see [`docs/DESIGN.md`](docs/DESIGN.md) § Planned extensions).
 
@@ -71,6 +71,7 @@ wp.plot_light_curve(lc, layout="report")     # apparent-mag + flux overview, all
 - 📓 **[Quick-start notebook](examples/at2017gfo_quickstart.ipynb)** — AT2017GFO end-to-end with a custom model (ABC + SNPE).
 - 📘 **[Tutorial](docs/TUTORIAL.md)** — a hands-on tour of every feature, with plots.
 - 📊 **[AT2017GFO report](docs/REPORT_at2017gfo.md)** — ABC vs ABC-SMC across three models.
+- ⏱️ **[Benchmark](docs/BENCHMARK.md)** — timed flux-vs-magnitude kilonova sanity check (ABC/MCMC/SNPE) on AT2017GFO.
 - 🧩 **[Extending Whisper](docs/EXTENDING.md)** — add your own model, sampler, likelihood, or distance.
 - 🏛️ **[Design rationale](docs/DESIGN.md)** — the *why* behind the architecture, and known limitations.
 - 📑 **[API reference](docs/API_REFERENCE.md)** — every function and its arguments.

@@ -4,7 +4,7 @@ Generated for **v0.0.1.dev0**. Covers data ingestion + plotting and the inferenc
 axes (models, samplers, likelihoods, distances) with the ABC / ABC-SMC / MCMC / SNPE samplers.
 
 - **Environment:** Docker container `phe_sbi`, Python 3.11.
-- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (172 tests; `-m "not slow"` skips the 3 SNPE training + 1 mck19 fit + 1 kilonova fit tests).
+- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (177 tests; `-m "not slow"` skips the SNPE training/GPU + mck19 / kilonova fit + benchmark tests).
 
 ## Package map
 
@@ -244,6 +244,11 @@ round; `space` ('auto'|'flux'|'magnitude') matches the likelihood; `num_workers`
   `support_samples` draws — kept modest, since sbi's default 1e6 can take hours; rejection sampling makes
   it compute-heavy).
 
+- **Device (GPU):** `device` = `'cpu'` (default), `'cuda'`/`'gpu'`/`'cuda:N'`, or `'auto'` (CUDA when
+  available, else CPU). The torch prior + observed data are placed on the device; a GPU request without
+  one warns and falls back to CPU. The GPU accelerates *training* (not the CPU simulator), so it helps
+  most with many simulations / large nets — see `scripts/benchmark_snpe_device.py` (`docs/figures/snpe_device_benchmark.png`).
+
 Extra kwargs pass to `NPE.train` (e.g. `max_num_epochs`, `training_batch_size`, `stop_after_epochs`).
 `max_log_likelihood`/`AIC`/`BIC` are the exact Gaussian values at the best posterior draw. The trained
 sbi posterior is attached as `result.posterior` (and `result.posteriors` per round) for resampling /
@@ -304,7 +309,7 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `scripts/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (172 tests, all passing)
+## 8. Test coverage (177 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -328,6 +333,7 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 | `test_mcmc.py` | 4 | MCMC recovery + reproducibility, data-mode-consistent likelihood space, and ABC↔MCMC posterior agreement. |
 | `test_mck19.py` | 7 | `mck19` AGN-disk BBH flare: registration, finite/positive flux, band-dependence, peak at `t_ram`, redshift dimming, no-bands warning, and end-to-end MCMC recovery in magnitude space (`slow`). |
 | `test_two_component_kilonova.py` | 8 | redback kilonova: registry/prior + band-mapping + no-bands error (no redback needed); flux finite/positive, band-dependence, machine-precision redback round-trip, mixed-band predict, and SNPE recovery (`slow`) — all guarded by `importorskip("redback")`. |
+| `test_benchmark_kilonova.py` | 3 | flux-vs-magnitude benchmark: `setup` (data + prior) and the magnitude-space χ² distance (no redback), plus a `slow` end-to-end fit→publication-report render. |
 
 Fixtures: `tests/data/at2017gfo.csv`, `tests/data/ztf18aarlhfw.csv`. Figures + ABC JSON in `docs/figures/`.
 All SVO/network calls are **mocked** — no live network in CI. See

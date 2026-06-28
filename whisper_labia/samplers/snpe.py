@@ -60,12 +60,13 @@ def _require_sbi():
         process_simulator=process_simulator, check_sbi_inputs=check_sbi_inputs)
 
 
-def _to_torch_prior(prior, sb):
-    """Adapt a Whisper :class:`Prior` to a torch prior sbi can use.
+def _to_torch_prior(prior, sb, device="cpu"):
+    """Adapt a Whisper :class:`Prior` to a torch prior sbi can use, on ``device``.
 
     All-``Uniform`` priors become a single ``BoxUniform`` (fast); a mix that includes ``LogUniform``
     becomes a ``MultipleIndependent`` of per-parameter 1-D distributions (``LogUniform`` = exp of a
-    uniform in log-space). Unsupported distribution types raise a clear error.
+    uniform in log-space). Unsupported distribution types raise a clear error. The prior tensors are
+    created on ``device`` so it matches the (GPU) training device sbi requires.
     """
     from ..priors import LogUniform, Uniform
 
@@ -77,11 +78,12 @@ def _to_torch_prior(prior, sb):
             lows.append(float(d.low))
             highs.append(float(d.high))
             comps.append(torch.distributions.Uniform(
-                torch.tensor([float(d.low)]), torch.tensor([float(d.high)])))
+                torch.tensor([float(d.low)], device=device), torch.tensor([float(d.high)], device=device)))
         elif isinstance(d, LogUniform):
             all_uniform = False
             base = torch.distributions.Uniform(
-                torch.tensor([float(np.log(d.low))]), torch.tensor([float(np.log(d.high))]))
+                torch.tensor([float(np.log(d.low))], device=device),
+                torch.tensor([float(np.log(d.high))], device=device))
             comps.append(torch.distributions.TransformedDistribution(
                 base, torch.distributions.ExpTransform()))
         else:
@@ -89,7 +91,7 @@ def _to_torch_prior(prior, sb):
                 f"SNPE prior adapter supports Uniform/LogUniform; got {type(d).__name__} for "
                 f"parameter {name!r}. Provide a Uniform/LogUniform prior or extend _to_torch_prior.")
     if all_uniform:
-        return sb.BoxUniform(low=torch.tensor(lows), high=torch.tensor(highs))
+        return sb.BoxUniform(low=torch.tensor(lows, device=device), high=torch.tensor(highs, device=device))
     return sb.MultipleIndependent(comps)
 
 
@@ -153,6 +155,27 @@ def _build_density_estimator(density_estimator, embedding_net, hidden_features,
     return posterior_nn(model=density_estimator, **kwargs)
 
 
+def _resolve_device(device, torch):
+    """Resolve the requested SNPE training device, falling back to CPU when CUDA is unavailable.
+
+    Accepts ``'cpu'``, ``'cuda'`` / ``'gpu'`` / ``'cuda:N'``, or ``'auto'`` (use CUDA when available,
+    else CPU). Requesting a GPU without one available warns and uses CPU rather than crashing.
+    """
+    import warnings
+
+    d = str(device).lower()
+    cuda_ok = bool(torch.cuda.is_available())
+    if d == "auto":
+        return "cuda" if cuda_ok else "cpu"
+    if d in ("gpu", "cuda") or d.startswith("cuda:"):
+        if not cuda_ok:
+            warnings.warn(f"SNPE device={device!r} requested but CUDA is unavailable; using CPU.",
+                          stacklevel=3)
+            return "cpu"
+        return "cuda" if d == "gpu" else d
+    return "cpu"
+
+
 class SNPESampler(BaseSampler):
     """Sequential Neural Posterior Estimation (sbi ``NPE``). See the module docstring."""
 
@@ -183,6 +206,12 @@ class SNPESampler(BaseSampler):
         (kept modest; sbi's default of 1e6 can take hours). Extra keyword args pass through to ``NPE.train``
         (e.g. ``max_num_epochs``, ``training_batch_size``, ``stop_after_epochs``). The trained sbi
         posterior is attached as ``result.posterior`` (per round in ``result.posteriors``).
+
+        **Device:** ``device`` selects where the neural density estimator trains — ``'cpu'`` (default),
+        ``'cuda'`` / ``'gpu'`` / ``'cuda:N'``, or ``'auto'`` (CUDA when available, else CPU). The torch
+        prior and observed data are placed on the device automatically; requesting a GPU without one
+        warns and falls back to CPU. The GPU accelerates *training*, not the (CPU) simulator — so it
+        helps most with many simulations / large networks (see ``scripts/benchmark_snpe_device.py``).
         """
         if proposal_mode not in ("posterior", "restricted"):
             raise ValueError(f"proposal_mode must be 'posterior' or 'restricted'; got {proposal_mode!r}.")
@@ -204,14 +233,15 @@ class SNPESampler(BaseSampler):
         k, n = len(param_names), int(len(times))
 
         torch.manual_seed(int(seed))
-        torch_prior = _to_torch_prior(prior, sb)
+        device = _resolve_device(device, torch)            # 'auto'/'gpu' -> 'cuda'/'cpu', with fallback
+        torch_prior = _to_torch_prior(prior, sb, device)   # prior tensors must match the training device
         torch_prior, _, prior_returns_numpy = sb.process_prior(torch_prior)
         simulator = _build_simulator(
             predict, param_names, times, bands, lik.model_in_space, lik.sigma, torch, seed)
         simulator = sb.process_simulator(simulator, torch_prior, prior_returns_numpy)
         sb.check_sbi_inputs(simulator, torch_prior)
 
-        x_o = torch.as_tensor(np.asarray(lik.y, dtype=float), dtype=torch.float32)
+        x_o = torch.as_tensor(np.asarray(lik.y, dtype=float), dtype=torch.float32).to(device)
         de_builder = _build_density_estimator(
             density_estimator, embedding_net, hidden_features, num_transforms, num_bins)
         inference = sb.NPE(prior=torch_prior, density_estimator=de_builder,

@@ -5,6 +5,29 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### SNPE on GPU
+- **SNPE can now train on a GPU.** `fit_SNPE(..., device=...)` accepts `'cpu'` (default), `'cuda'` /
+  `'gpu'` / `'cuda:N'`, or **`'auto'`** (CUDA when available, else CPU). The torch prior and observed
+  data are now placed on the chosen device (fixing the sbi *"prior device must match training device"*
+  error), and requesting a GPU without one **warns and falls back to CPU** instead of crashing.
+- The GPU accelerates the neural-network **training**, not the (CPU) simulator — so it helps most with
+  many simulations / large networks. `scripts/benchmark_snpe_device.py` measures GPU-vs-CPU runtime
+  across a ladder of simulation counts (estimating each tier's time before running it, with a
+  `--budget` guard) and saves a log-log plot (`docs/figures/snpe_device_benchmark.png`).
+- Tested: `_resolve_device` mapping/fallback (no GPU needed) + a slow on-GPU recovery test
+  (`skipif` no CUDA).
+
+### Kilonova flux-vs-magnitude benchmark
+- New **timed benchmark + sanity check** ([`docs/BENCHMARK.md`](docs/BENCHMARK.md),
+  `scripts/benchmark_kilonova_modes.py`): `two_component_kilonova` fit to AT2017GFO (g/r/i) in
+  **flux** vs **magnitude** space with ABC / MCMC / SNPE (6 configs). Records per-config **runtime**,
+  AIC, RMS and posterior size; each config writes its own result file so the six run in parallel.
+- **Publication-quality report figure** (`docs/figures/kilonova_benchmark_report.png`): larger fonts,
+  colourblind-safe (Okabe–Ito) band colours, line-style per sampler, inward ticks, clear unit-labelled
+  axes, and an **embedded table of the best-fit ejecta parameters + metrics per configuration**.
+- Tested (`tests/test_benchmark_kilonova.py`): `setup` + magnitude-space distance (no redback) + a
+  slow, guarded end-to-end fit→report.
+
 ### `two_component_kilonova` — first redback-backed model
 - New built-in **`two_component_kilonova`** (`whisper_labia/models/two_component_kilonova.py`): a
   blue (low-κ) + red (high-κ) kilonova via the optional **redback** package (`[models]` extra), wrapping
@@ -137,4 +160,4 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 - pip-installable from GitHub; relaxed dependency pins (no forced numpy/scipy downgrade); redback is an
   optional `[models]` extra — Phase-1 data + plotting + ABC run with no redback and no compiler.
 - Tutorial, API reference, design rationale, extensibility + contributing guides, an AT2017GFO
-  model-comparison report, and a quick-start notebook. LICENSE (GPL-3.0), CITATION.cff, py.typed. 172 tests (redback-backed model tests skip without the [models] extra).
+  model-comparison report, and a quick-start notebook. LICENSE (GPL-3.0), CITATION.cff, py.typed. 175 tests (redback-backed model + benchmark tests skip without the [models] extra).
