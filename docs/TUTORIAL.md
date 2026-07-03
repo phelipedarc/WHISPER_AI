@@ -233,8 +233,14 @@ The flare model tracks the r-band decline well. (Its reduced χ² is high only b
 is high-SNR — tiny error bars magnify any model imperfection; physically-motivated models come later.)
 
 - **Acceptance** is by `quantile` (keep the best fraction — robust default) or a fixed `threshold`.
-- **Metrics:** the χ² distance equals −2 ln L for a Gaussian likelihood, so ABC reports
-  `max_log_likelihood`, `AIC` and `BIC` for model comparison.
+- **Noise-matched simulations** (`simulate_noise=True`, default): every simulation gets per-point
+  white noise drawn from the reported `flux_err`, so it matches the generative model of the data —
+  this is what makes ABC exact as ε→0 and keeps the posterior width honest. Distances therefore
+  include the simulation noise (`E[D] ≈ χ² + n_points`): re-derive any fixed `threshold` from the old
+  noiseless scale, or just use `quantile`.
+- **Metrics:** ABC reports `max_log_likelihood`, `AIC` and `BIC` for model comparison, evaluated with
+  the exact Gaussian likelihood at the best **accepted** draw (selected by likelihood, not by the
+  noisy distance).
 
 ### It runs in parallel
 Simulations are split across processes (`n_jobs`). On this machine (200k simulations):
@@ -383,28 +389,39 @@ pairplot(samples, labels=res.parameters)
 **Advanced / flexible options** (for harder, high-dimensional or multi-band problems):
 
 ```python
-import torch.nn as nn
 res = wp.fit_SNPE(
     r, "flare", prior=prior,
-    embedding_net=nn.Sequential(nn.Linear(len(r), 64), nn.ReLU(), nn.Linear(64, 16)),  # learn features from x
-    density_estimator="nsf", hidden_features=64, num_transforms=8,                      # custom architecture
-    proposal_mode="restricted", truncate_quantile=1e-4, support_samples=10_000,         # truncated SNPE (TSNPE)
-    num_workers=8,                                                                       # parallel simulation
+    x_format="stacked",                            # condition on (value, err, time, band) per point
+    embedding_net="tcn", embedding_latent=32,      # built-in: "mlp" | "tcn" (or any torch.nn.Module)
+    density_estimator="nsf", hidden_features=64, num_transforms=8,                # custom architecture
+    proposal_mode="restricted", truncate_quantile=1e-4, support_samples=10_000,   # truncated SNPE
+    num_workers=8,                                                                # parallel simulation
 )
 ```
 
-- **`embedding_net`** — any `torch.nn.Module` mapping the simulated light curve to features (its input
-  dim must equal the number of light-curve points); essential when the data vector is large.
+- **`x_format="stacked"`** — condition the network on the full observation tuple
+  `(value, error, time, band)` instead of the values alone: the same information the likelihood-based
+  samplers get, and what an embedding net needs to exploit cadence/noise structure.
+- **`embedding_net`** — `"mlp"` or `"tcn"` build the built-in compressors (`whisper_labia.embeddings`;
+  the TCN is a Temporal Convolutional Network — dilated causal convolutions specialized for time
+  series), trained jointly with the estimator to `embedding_latent` features; or pass any
+  `torch.nn.Module`. In the Bazin benchmark the MLP was the *fastest* config and the TCN the *most
+  accurate* (see `docs/figures/sanity_check/REPORT.md`).
 - **`density_estimator`** — a name (`'maf'`/`'nsf'`/`'mdn'`) **or** a pre-built `posterior_nn(...)`
   factory; `hidden_features` / `num_transforms` / `num_bins` tune the built-in architectures.
 - **`proposal_mode='restricted'`** — truncated SNPE (`RestrictedPrior` + `get_density_thresholder`),
-  sometimes more robust than the default SNPE-C. It rejection-samples the restricted prior, so it can be
-  **compute-heavy** — give it enough `num_simulations` and keep `support_samples` modest.
+  more robust than SNPE-C when between-round posterior sampling leaks; keep `support_samples` modest.
+- **`predict_torch`** — a batched torch forward model (`(B, D)` params + `(n,)` times → `(B, n)` flux)
+  replaces the per-row Python simulator with one on-device call: **~2000× faster simulation** on a GPU
+  (flux-space data). Per-point noise from the reported errors is added on-device.
 - **`device`** — train on a GPU: `'cpu'` (default), `'cuda'` / `'gpu'` / `'cuda:N'`, or **`'auto'`**
-  (CUDA when available, else CPU; a GPU request with no CUDA warns and falls back). The GPU accelerates
-  the neural-net *training*, not the (CPU) simulator, so it pays off most with many simulations /
-  large networks — `scripts/benchmark_snpe_device.py` measures ~7–10× speed-ups (see
-  [`docs/BENCHMARK.md`](BENCHMARK.md)).
+  (CUDA when available, else CPU; a GPU request with no CUDA warns and falls back). With
+  `predict_torch` the GPU also runs the simulator; `training_batch_size`/`stop_after_epochs` (passed
+  through to `sbi`) are the training-speed levers — `scripts/benchmark_snpe_device.py` and
+  [`docs/BENCHMARK.md`](BENCHMARK.md) carry the measurements.
+- **Amortized reuse** — with `num_rounds=1` (NPE) the trained `result.posterior` infers a **new**
+  same-grid observation in ~10–100 ms: `result.posterior.sample((2000,), x=result.format_x(new_flux))`
+  — no refit per object.
 
 ```python
 res = wp.fit_SNPE(lc, "two_component_kilonova", device="auto", num_rounds=2, num_simulations=2000)

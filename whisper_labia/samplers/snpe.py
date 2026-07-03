@@ -354,6 +354,8 @@ class SNPESampler(BaseSampler):
                     accept_reject_fn = sb.get_density_thresholder(
                         posterior, quantile=float(truncate_quantile),
                         num_samples_to_estimate_support=int(support_samples))
+                    # device= is REQUIRED: sbi 0.23's RestrictedPrior defaults to CPU and moves its
+                    # samples there, which crashes the on-device predict_torch simulator (cuda vs cpu).
                     proposal = sb.RestrictedPrior(
                         torch_prior, accept_reject_fn, sample_with="rejection", device=device)
                 else:

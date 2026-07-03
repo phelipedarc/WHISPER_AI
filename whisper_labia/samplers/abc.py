@@ -43,6 +43,8 @@ def _simulate_batch(predict, prior, distance, times, bands, obs_flux, obs_err, i
         theta = prior.sample(rng)
         sim = np.asarray(predict(theta, times, bands), dtype=float)
         if simulate_noise:
+            # Per-point noise from the REPORTED errors, drawn from this simulation's own stream —
+            # the simulated data then follows the same generative model as the observation.
             sim = sim + rng.normal(0.0, obs_err)
         distances[j] = distance(obs_flux, obs_err, sim, bands)
         thetas.append(theta)
