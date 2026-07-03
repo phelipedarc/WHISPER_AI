@@ -18,15 +18,26 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
   #parameters), which reproduces the Gaussian posterior width and restores |z|≲2 with nominal coverage;
   a float sets a fixed floor. Default `None` keeps the old behavior.
 - **`scripts/sanity_check.py` + `scripts/sanity_check_plots.py`** — end-to-end recovery benchmark on
-  synthetic data with known ground truth: fits a 4-param damped sinusoid and a 2/4/6-param Gaussian-pulse
-  sweep with **all five samplers** (MCMC, ABC, ABC-SMC, NPE-GPU, SNPE-GPU), timing each, and renders
-  posterior histograms, an all-sampler corner, posterior-predictive checks, SBC rank histograms, a
-  recovery/speed/scaling summary and `REPORT.md` into `docs/figures/sanity_check/`. Confirms every
-  sampler recovers the injected parameters within ~2σ (good reduced χ² and predictive coverage), and uses
-  SBC to rank calibration: **exact MCMC** is calibrated, **NPE** close behind (mildly over-confident at a
-  modest training budget), while the likelihood-free **ABC family** trails — rejection ABC is
-  under-confident and the diagonal-kernel ABC-SMC can't fully capture the correlated oscillatory
-  posterior — exactly the approximation error SBC is designed to expose.
+  synthetic data with known ground truth: fits a physically-motivated **Bazin (2009) supernova** light
+  curve (headline showcase), a 4-param damped sinusoid (correlated/oscillatory stress test) and a
+  2/4/6-param Gaussian-pulse sweep, timing every sampler, and renders posterior histograms, an
+  all-sampler corner, posterior-predictive checks, SBC rank histograms, a recovery/speed/scaling summary
+  and `REPORT.md` into `docs/figures/sanity_check/`. Showcase noise seeds are screened non-adversarial
+  (worst |MLE−truth|/σ_Fisher ≲ 1) and the choice is disclosed in the report — single-realization tables
+  compare methods; **SBC over many unscreened realizations is the calibration evidence**. On the damped
+  sine, exact MCMC calibrates, NPE-MAF trails mildly over-confident, and the ABC family shows its
+  width errors (rejection ABC under-confident; the diagonal-kernel ABC-SMC can't fully capture the
+  correlated posterior) — exactly the approximation error SBC is designed to expose.
+- **Neural SBI at scale: MDN + NSF, GPU-parallel, no embedding net.** The Bazin showcase fits
+  `npe_mdn`/`npe_nsf` (amortized, 1 round × 30k simulations) and `snpe_mdn`/`snpe_nsf` (sequential,
+  10 rounds × 3k) with the density estimators conditioning **directly on the raw light-curve vector**;
+  each method trains on its own GPU, so all four neural fits run in parallel. Results: **every method
+  recovers the truth within 1σ** (reduced χ² ≈ 1); **NPE-NSF is formally SBC-calibrated** (min
+  rank-uniformity p = 0.057; three of four parameters p > 0.5) alongside exact MCMC (p = 0.229);
+  NPE-MDN is the fastest accurate neural method (371 s end-to-end, best point recovery 0.24σ) but
+  marginally over-confident (p = 0.036). Note: sbi 0.23.3's SNPE-C **non-atomic MoG loss has a CUDA
+  device-mismatch bug** (triggered when the proposal is an MDN posterior), so `snpe_mdn` runs the
+  **truncated sequential scheme** (`proposal_mode="restricted"`) — documented in the script.
 
 ### Scientific-review fixes (physical + Bayesian correctness)
 A systematic, adversarially-verified review (physical consistency, Bayesian rigor, numerics) fixed:
