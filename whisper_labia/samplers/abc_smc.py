@@ -98,8 +98,8 @@ class ABCSMCSampler(BaseSampler):
     name = "abc_smc"
 
     def fit(self, lc, model, prior=None, *, n_particles=500, n_rounds=5, epsilon_schedule=None,
-            quantile=0.5, perturbation_scale=0.1, distance=chi2_distance, n_jobs=None, seed=0,
-            max_attempts_per_round=None):
+            quantile=0.5, min_epsilon=None, perturbation_scale=0.1, distance=chi2_distance,
+            n_jobs=None, seed=0, max_attempts_per_round=None):
         """Fit ``lc`` with ``model`` via importance-weighted ABC-SMC, returning a :class:`SamplerResult`.
 
         Parameters
@@ -119,6 +119,14 @@ class ABCSMCSampler(BaseSampler):
             (next epsilon = ``quantile`` of the current round's accepted distances).
         quantile : float, default 0.5
             Adaptive-epsilon quantile (ignored when ``epsilon_schedule`` is given).
+        min_epsilon : float or ``"auto"``, optional
+            Floor on the adaptive epsilon so it is not driven all the way to the best achievable
+            distance ``chi2_min``. A hard chi-square cutoff at ``chi2_min`` accepts only a razor-thin
+            shell around the best fit, collapsing the posterior to (essentially) the MLE and yielding an
+            **overconfident** posterior whose width is far below the true parameter uncertainty.
+            ``"auto"`` (recommended) floors epsilon at ``chi2_min + 2·(k+2)`` (``k`` = #parameters),
+            which reproduces the Gaussian posterior width; a float sets a fixed floor. Ignored when
+            ``epsilon_schedule`` is given (default ``None`` = no floor, epsilon → ``chi2_min``).
         perturbation_scale : float, default 0.1
             Retained for backward compatibility; the kernel covariance is now set adaptively from the
             weighted population (Toni 2009), so this value is unused.
@@ -155,6 +163,14 @@ class ABCSMCSampler(BaseSampler):
         predict = model.predict
         params = list(model.parameters)
 
+        # Epsilon floor. A hard chi-square cutoff at epsilon = chi2_min + c accepts the ellipsoid
+        # {Δθ : Δθ'·Hess(chi2)·Δθ < c}; matching its marginal width to the Gaussian posterior needs
+        # c ≈ 2·(k+2) (uniform-in-ellipsoid, k params). Driving epsilon to chi2_min (c→0) instead
+        # collapses the posterior to the MLE -> overconfident. ``"auto"`` floors epsilon adaptively at
+        # (running best distance) + 2·(k+2); a float sets a fixed floor.
+        auto_floor = min_epsilon == "auto"
+        eps_floor = None if (auto_floor or min_epsilon is None) else float(min_epsilon)
+        floor_c = 2.0 * (len(params) + 2)
         if epsilon_schedule is not None:
             epsilon_schedule = [float(e) for e in epsilon_schedule]
             n_rounds = len(epsilon_schedule)
@@ -229,6 +245,10 @@ class ABCSMCSampler(BaseSampler):
                 kernel_std = _kernel_std(pop_arr, weights) if len(weights) else None
                 if epsilon_schedule is None and round_idx + 1 < n_rounds:
                     epsilon = float(np.quantile(dists, quantile))
+                    if auto_floor:                     # keep epsilon above chi2_min + 2(k+2): match width
+                        epsilon = max(epsilon, float(dists.min()) + floor_c)
+                    elif eps_floor is not None:        # fixed user floor
+                        epsilon = max(epsilon, eps_floor)
         finally:
             if pool is not None:
                 pool.shutdown()
@@ -261,6 +281,7 @@ class ABCSMCSampler(BaseSampler):
             "rounds": round_info, "total_simulations": int(total_attempts),
             "weighted": True, "kernel": "diagonal_gaussian_2x_weighted_var",
             "quantile": None if epsilon_schedule is not None else float(quantile),
+            "min_epsilon": ("auto" if auto_floor else eps_floor),
             "n_jobs": int(n_jobs), "distance": getattr(distance, "__name__", str(distance)),
             "likelihood_space": make_likelihood(lc).space if population else None,
         }

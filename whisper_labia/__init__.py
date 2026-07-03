@@ -26,6 +26,12 @@ from .io import (
 )
 from .plotting import CORNER_PALETTE, plot_corner, plot_light_curve
 from .metrics import waic
+from .validation import (
+    posterior_predictive_check,
+    recovery_metrics,
+    sbc_rank,
+    sbc_ranks,
+)
 from .priors import LogUniform, Prior, Uniform
 from .distance import chi2_distance, get_distance, list_distances, register_distance
 from .likelihood import (
@@ -66,6 +72,6 @@ __all__ = [
     # samplers (registry)
     "fit_ABC", "fit_ABC_SMC", "fit_MCMC", "fit_SNPE", "fit", "SamplerResult", "register_sampler",
     "list_samplers",
-    # metrics
-    "waic",
+    # metrics + validation
+    "waic", "recovery_metrics", "posterior_predictive_check", "sbc_rank", "sbc_ranks",
 ]

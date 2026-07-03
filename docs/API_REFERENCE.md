@@ -4,7 +4,7 @@ Generated for **v0.0.1.dev0**. Covers data ingestion + plotting and the inferenc
 axes (models, samplers, likelihoods, distances) with the ABC / ABC-SMC / MCMC / SNPE samplers.
 
 - **Environment:** Docker container `phe_sbi`, Python 3.11.
-- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (189 tests; `-m "not slow"` skips the SNPE training/GPU + mck19 / kilonova fit + benchmark tests).
+- **Run tests:** `docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && python -m pytest tests -q'` (195 tests; `-m "not slow"` skips the SNPE training/GPU + mck19 / kilonova fit + benchmark tests).
 
 ## Package map
 
@@ -13,6 +13,7 @@ whisper_labia/
   __init__.py          # public API exports
   plotting.py          # plot_light_curve, plot_corner
   metrics.py           # waic (Widely Applicable Information Criterion)
+  validation.py        # recovery_metrics, posterior_predictive_check, sbc_rank, sbc_ranks
   priors.py            # Uniform, LogUniform, Prior
   distance.py          # chi2_distance
   likelihood.py        # GaussianLikelihood, ...WithUpperLimits, Mixture..., make_likelihood
@@ -22,8 +23,8 @@ whisper_labia/
 ```
 
 Top-level (`import whisper_labia as wp`): `LightCurve`, `load_lightcurve`, `plot_light_curve`,
-`plot_corner`, `CORNER_PALETTE`, `waic`,
-`group_bands`, `FILTER_LOOKUP`, `resolve_band`, `resolve_bands`, `LSST_BAND_INFO`, `SvoUnavailable`,
+`plot_corner`, `CORNER_PALETTE`, `waic`, `recovery_metrics`, `posterior_predictive_check`, `sbc_rank`,
+`sbc_ranks`, `group_bands`, `FILTER_LOOKUP`, `resolve_band`, `resolve_bands`, `LSST_BAND_INFO`, `SvoUnavailable`,
 `register_manual_band`, `unregister_manual_band`, `clear_manual_bands`, `Prior`, `Uniform`, `LogUniform`,
 `Model`, `register_model`, `get_model`, `list_models`, `chi2_distance`, `register_distance`,
 `get_distance`, `list_distances`, `GaussianLikelihood`, `GaussianLikelihoodWithUpperLimits`,
@@ -223,11 +224,14 @@ four reach the same posterior on the same data (see `scripts/compare_samplers.py
 | `seed` | `0` | RNG seed (independent streams per worker via `SeedSequence`). |
 
 **`ABCSMCSampler.fit(lc, model, prior=None, *, n_particles=500, n_rounds=5, epsilon_schedule=None,
-quantile=0.5, perturbation_scale=0.1, distance=chi2_distance, n_jobs=None, seed=0)`** — sequential
-rejection: round 0 draws from the prior; later rounds resample + Gaussian-perturb accepted particles
-under a shrinking epsilon (explicit `epsilon_schedule`, or adaptive `quantile` of the previous round's
-distances). Perturbs only parameters and rejects proposals outside the prior; `info` carries per-round
-epsilon / acceptance / `total_simulations`.
+quantile=0.5, min_epsilon=None, perturbation_scale=0.1, distance=chi2_distance, n_jobs=None, seed=0)`**
+— sequential rejection: round 0 draws from the prior; later rounds resample + Gaussian-perturb accepted
+particles under a shrinking epsilon (explicit `epsilon_schedule`, or adaptive `quantile` of the previous
+round's distances). Perturbs only parameters and rejects proposals outside the prior; `info` carries
+per-round epsilon / acceptance / `total_simulations`. **`min_epsilon`** floors the adaptive epsilon so it
+is not driven to `χ²_min` (which collapses the posterior onto the MLE → overconfident): `"auto"` floors
+it at **`χ²_min + 2(k+2)`** (`k` = #parameters), reproducing the Gaussian posterior width; a float sets a
+fixed floor (default `None` = no floor).
 
 **`MCMCSampler.fit(lc, model, prior=None, *, nwalkers=None, nsteps=5000, burnin=1000, thin=10,
 initial_guess=None, initial_scatter=1e-3, space="auto", likelihood="auto", seed=0, progress=False,
@@ -323,6 +327,30 @@ Note `p_waic` (and hence WAIC) inflates for posteriors much broader than the lik
 tolerance posterior or an under-converged SNPE run — which is itself a useful diagnostic; magnitude space
 is numerically gentler than flux space (whose tiny errors make the likelihood very sharp).
 
+### 6.7 Validation — recovery, PPC, SBC  (`whisper_labia.validation`)
+
+Sampler-agnostic checks that a fit **recovered the truth** with **reliable uncertainties** (used by
+`scripts/sanity_check.py`); all take a `SamplerResult` (or its `.samples`) so they work for every sampler.
+
+**`recovery_metrics(result, truth)`** — per-parameter recovery of a known `truth` (dict): posterior
+`median`/`mean`/`std`, 68% (16–84) and 95% (2.5–97.5) credible intervals, `bias = median − true`, the
+standardized **`z_score` = bias/std** (`|z|≲2` ⇒ recovered), and boolean 68/95% `within` coverage; a
+top-level `_summary` gives `max_abs_z`, `rms_z`, `coverage68`/`coverage95`.
+
+**`posterior_predictive_check(result, lc, model=None, *, n_draws=300, time_grid=None, seed=0)`** — a
+posterior-predictive **band** on a grid, the **reduced χ² at the best fit** (goodness-of-fit, decoupled
+from posterior width), noise-inflated **predictive coverage** `ppc_coverage68`/`95` (fraction of data in
+the predictive band — the clean calibration metric), and a Bayesian χ² `bayesian_p_value` (≈0.5 healthy).
+
+**`sbc_rank(samples, true_value)`** / **`sbc_ranks(ranks_by_param, *, n_bins=20)`** — Simulation-Based
+Calibration (Talts 2018; Säilynoja 2022). Over `L` prior→data→fit realizations the rank of each true
+value within its posterior is **uniform** iff the posterior is calibrated; `sbc_ranks` returns the rank
+histogram + a **χ²-of-uniformity p-value** per parameter (∪-shape = overconfident, ∩-shape =
+underconfident, slope = biased) and a `_summary` with `min_uniformity_p` + a `calibrated` verdict.
+
+Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`, `wp.sbc_ranks`. See
+`docs/figures/sanity_check/REPORT.md` for the full synthetic-recovery benchmark across all five samplers.
+
 ## Notes & limitations (review findings)
 
 - **Metrics are cross-sampler comparable:** ABC/ABC-SMC still *accept* on the flux χ² distance, but
@@ -347,7 +375,7 @@ is numerically gentler than flux space (whose tiny errors make the likelihood ve
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `scripts/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (189 tests, all passing)
+## 8. Test coverage (195 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -357,12 +385,13 @@ is numerically gentler than flux space (whose tiny errors make the likelihood ve
 | `test_loader.py` | 12 | AT2017GFO load, window/subset, grouping, `min_snr`, `explosion_date`, upper limits. |
 | `test_plotting.py` | 7 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers; `plot_corner` overlay/legend, common-params + log axes + array/empty errors. |
 | `test_metrics.py` | 4 | WAIC keys + finite + better-fit-lower ordering, `fixed=`/subsampling, and pointwise log-lik (Gaussian + upper-limits) summing to the total. |
+| `test_validation.py` | 4 | recovery z-score + coverage signs, PPC (reduced χ²≈1, predictive coverage, p≈0.5), SBC rank uniformity (calibrated vs edge-biased), `sbc_rank` bounds. |
 | `test_review_fixes.py` | 6 | scientific-review fixes: ABC exact-likelihood AIC, ABC-SMC importance weighting, WAIC drops draws not data points, mck19 π factor, CCM89 out-of-range clamp, non-positive-flux→mag guard. |
 | `test_priors.py` | 6 | Uniform/LogUniform/Prior sampling, log_prob, rescale, picklability. |
 | `test_models.py` | 8 | flare/bazin/gaussian_rise (incl. flare pre-explosion=0, bazin tail→0), custom model, errors. |
 | `test_distance.py` | 2 | chi² zero/known value. |
 | `test_abc.py` | 6 | parameter recovery, serial+parallel, acceptance count, JSON, dispatch, custom model. |
-| `test_abc_smc.py` | 6 | SMC registration, recovery, epsilon tightening, explicit schedule, dispatch, model-agnostic. |
+| `test_abc_smc.py` | 8 | SMC registration, recovery, epsilon tightening, explicit schedule, dispatch, model-agnostic, and the `min_epsilon` floor (broadens the posterior; `"auto"` runs). |
 | `test_likelihood.py` | 9 | Gaussian flux/mag, space-auto, upper-limit CDF, mixture, make_likelihood, picklable. |
 | `test_units.py` | 12 | F_ν/F_λ→Jy, per-point λ, NaN-λ error, mag rejects flux unit, no-unit default, flux dimensionality. |
 | `test_svo.py` | 15 | FILTER_LOOKUP→SVO, mocked metadata/index, cache hit + disk cache, corrupt-cache (×4 params), graceful degrade, manual override (no spurious warn), transmission, ambiguity. |

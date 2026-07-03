@@ -5,6 +5,29 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Inference-validation tools + synthetic-recovery sanity check
+- **`whisper_labia.validation`** — reusable, sampler-agnostic checks that a fit *recovered the truth*
+  with *reliable uncertainties*: `recovery_metrics` (per-parameter bias, standardized z-score, 68/95%
+  credible-interval coverage vs a known truth), `posterior_predictive_check` (predictive band, best-fit
+  reduced χ², noise-inflated predictive coverage, Bayesian p-value) and `sbc_rank` / `sbc_ranks`
+  (Simulation-Based Calibration — Talts 2018 / Säilynoja 2022; rank uniformity with a χ²-of-uniformity
+  p-value flags over-/under-confidence). Exposed as `wp.recovery_metrics` etc.
+- **ABC-SMC `min_epsilon` (ε floor).** The adaptive schedule could drive ε all the way to χ²_min,
+  collapsing the posterior onto the MLE — spuriously **overconfident** (on the synthetic 2-param recovery
+  the raw run gave |z|≈8 with 0% coverage). `min_epsilon="auto"` floors ε at **χ²_min + 2(k+2)** (k =
+  #parameters), which reproduces the Gaussian posterior width and restores |z|≲2 with nominal coverage;
+  a float sets a fixed floor. Default `None` keeps the old behavior.
+- **`scripts/sanity_check.py` + `scripts/sanity_check_plots.py`** — end-to-end recovery benchmark on
+  synthetic data with known ground truth: fits a 4-param damped sinusoid and a 2/4/6-param Gaussian-pulse
+  sweep with **all five samplers** (MCMC, ABC, ABC-SMC, NPE-GPU, SNPE-GPU), timing each, and renders
+  posterior histograms, an all-sampler corner, posterior-predictive checks, SBC rank histograms, a
+  recovery/speed/scaling summary and `REPORT.md` into `docs/figures/sanity_check/`. Confirms every
+  sampler recovers the injected parameters within ~2σ (good reduced χ² and predictive coverage), and uses
+  SBC to rank calibration: **exact MCMC** is calibrated, **NPE** close behind (mildly over-confident at a
+  modest training budget), while the likelihood-free **ABC family** trails — rejection ABC is
+  under-confident and the diagonal-kernel ABC-SMC can't fully capture the correlated oscillatory
+  posterior — exactly the approximation error SBC is designed to expose.
+
 ### Scientific-review fixes (physical + Bayesian correctness)
 A systematic, adversarially-verified review (physical consistency, Bayesian rigor, numerics) fixed:
 - **Cross-sampler AIC/BIC now comparable.** ABC/ABC-SMC previously reported `-2 lnL` from the bare
