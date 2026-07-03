@@ -95,12 +95,14 @@ def _to_torch_prior(prior, sb, device="cpu"):
     return sb.MultipleIndependent(comps)
 
 
-def _build_simulator(predict, names, times, bands, model_in_space, sigma, torch, seed):
+def _build_simulator(predict, names, times, bands, model_in_space, sigma, torch, seed, extra=None):
     """A batched sbi simulator: parameter vector(s) -> noisy light curve in the data space.
 
     The observational noise for each parameter row is seeded from ``(seed, that row's values)``, so it
     is **reproducible** and **independent of how sbi chunks the batch across workers** — sharing a
-    single RNG would make all ``num_workers>1`` processes add identical noise.
+    single RNG would make all ``num_workers>1`` processes add identical noise. When ``extra`` (a flat
+    array of constant context channels: errors / times / band codes) is given, it is appended to every
+    row — the ``x_format="stacked"`` layout.
     """
     import zlib
 
@@ -108,23 +110,52 @@ def _build_simulator(predict, names, times, bands, model_in_space, sigma, torch,
     sig = np.asarray(sigma, dtype=float)
     sig = np.where(np.isfinite(sig) & (sig > 0), sig, 1.0)   # guard degenerate/zero errors
     base_seed = int(seed)
+    extra = None if extra is None else np.asarray(extra, dtype=float).ravel()
 
     def simulator(theta):
         th = np.asarray(theta.detach().cpu().numpy(), dtype=float)
         single = th.ndim == 1
         if single:
             th = th[None, :]
-        out = np.empty((th.shape[0], n_obs), dtype=float)
+        width = n_obs if extra is None else n_obs + len(extra)
+        out = np.empty((th.shape[0], width), dtype=float)
         for i in range(th.shape[0]):
             params = {nm: float(th[i, j]) for j, nm in enumerate(names)}
             model_flux = np.asarray(predict(params, times, bands), dtype=float)
             mf = np.nan_to_num(model_in_space(model_flux), nan=0.0, posinf=0.0, neginf=0.0)
             row_seed = (base_seed + zlib.crc32(th[i].astype(np.float64).tobytes())) & 0xFFFFFFFF
-            out[i] = mf + np.random.default_rng(row_seed).normal(0.0, sig)
+            out[i, :n_obs] = mf + np.random.default_rng(row_seed).normal(0.0, sig)
+            if extra is not None:
+                out[i, n_obs:] = extra
         res = torch.as_tensor(out, dtype=torch.float32)
         return res[0] if single else res
 
     return simulator
+
+
+def _torch_simulate(proposal, num_simulations, predict_torch, times_t, sig_t, extra_t, torch, seed,
+                    show_progress=False):
+    """GPU-vectorized simulation: one batched ``predict_torch`` call replaces the per-row Python loop.
+
+    ``predict_torch(theta, times)`` maps a ``(B, D)`` parameter tensor and ``(n,)`` time tensor to a
+    ``(B, n)`` flux tensor **on the same device** — so 30k simulations are a single kernel launch
+    instead of 30k Python iterations. Per-point white noise ``N(0, sigma)`` (the reported errors) is
+    added on-device with a seeded generator for reproducibility.
+    """
+    with torch.no_grad():
+        try:
+            theta = proposal.sample((int(num_simulations),), show_progress_bars=show_progress)
+        except TypeError:                              # plain torch priors take no progress kwarg
+            theta = proposal.sample((int(num_simulations),))
+        theta = theta.to(times_t.device)               # e.g. RestrictedPrior samples on CPU (sbi 0.23)
+        flux = predict_torch(theta, times_t)
+        flux = torch.nan_to_num(flux.to(times_t.device), nan=0.0, posinf=0.0, neginf=0.0)
+        gen = torch.Generator(device=flux.device.type)
+        gen.manual_seed(int(seed) & 0x7FFFFFFF)
+        x = flux + torch.randn(flux.shape, generator=gen, device=flux.device) * sig_t
+        if extra_t is not None:
+            x = torch.cat([x, extra_t.unsqueeze(0).expand(x.shape[0], -1)], dim=1)
+        return theta.float(), x.float()
 
 
 def _build_density_estimator(density_estimator, embedding_net, hidden_features,
@@ -182,7 +213,8 @@ class SNPESampler(BaseSampler):
     name = "snpe"
 
     def fit(self, lc, model, prior=None, *, num_rounds=2, num_simulations=1000, space="auto",
-            density_estimator="maf", embedding_net=None, hidden_features=None, num_transforms=None,
+            density_estimator="maf", embedding_net=None, embedding_latent=32, x_format="value",
+            predict_torch=None, hidden_features=None, num_transforms=None,
             num_bins=None, proposal_mode="posterior", truncate_quantile=1e-4,
             support_samples=10000, num_samples=10000, device="cpu", seed=0, show_progress=False,
             num_workers=1, max_logl_scan=2000, **train_kwargs):
@@ -193,11 +225,24 @@ class SNPESampler(BaseSampler):
         ('auto'|'flux'|'magnitude') sets the data space for the simulator and the Gaussian noise model
         (errors required).
 
+        **Input layout:** ``x_format="value"`` (default) conditions on the data-space values alone;
+        ``x_format="stacked"`` conditions on the full observation tuple — four channels
+        ``(value, error, time, band code)`` concatenated per point, exactly the information the
+        likelihood-based samplers receive. The context channels are constant across simulations for a
+        fixed observing grid, but give an embedding net the cadence/noise structure and make the
+        network amortizable over observations.
+
         **Density estimator (flexible):** ``density_estimator`` is an sbi estimator name ('maf', 'nsf',
-        'mdn', ...) **or** a pre-built ``posterior_nn(...)`` factory. Pass an ``embedding_net``
-        (a ``torch.nn.Module`` mapping the simulated light curve to features — its input dim must equal
-        the number of light-curve points) and/or ``hidden_features`` / ``num_transforms`` / ``num_bins``
-        to build a custom architecture via ``sbi``'s ``posterior_nn``.
+        'mdn', ...) **or** a pre-built ``posterior_nn(...)`` factory. ``embedding_net`` is ``None``
+        (condition on the raw vector), a built-in name — ``"mlp"`` or ``"tcn"`` (Temporal Convolutional
+        Network; see :mod:`whisper_labia.embeddings`), compressed to ``embedding_latent`` features —
+        or any ``torch.nn.Module``. ``hidden_features`` / ``num_transforms`` / ``num_bins`` build a
+        custom architecture via ``sbi``'s ``posterior_nn``.
+
+        **GPU simulation:** pass ``predict_torch(theta, times) -> flux`` (a batched, device-agnostic
+        torch implementation of the model: ``(B, D)`` parameters + ``(n,)`` times → ``(B, n)`` flux) to
+        replace the per-row Python simulator with a single on-device batched call — per-point white
+        noise ``N(0, err)`` is added on-device. Flux-space data only.
 
         **Sequential scheme:** ``proposal_mode='posterior'`` (default) is SNPE-C (propose from the latest
         posterior). ``proposal_mode='restricted'`` is **truncated SNPE** — each round restricts the prior
@@ -215,6 +260,8 @@ class SNPESampler(BaseSampler):
         """
         if proposal_mode not in ("posterior", "restricted"):
             raise ValueError(f"proposal_mode must be 'posterior' or 'restricted'; got {proposal_mode!r}.")
+        if x_format not in ("value", "stacked"):
+            raise ValueError(f"x_format must be 'value' or 'stacked'; got {x_format!r}.")
         sb = _require_sbi()
         torch = sb.torch
         model = get_model(model)
@@ -225,6 +272,9 @@ class SNPESampler(BaseSampler):
         # Reuse the Gaussian likelihood for the data space, observation, errors, and exact metrics.
         from ..likelihood import GaussianLikelihood
         lik = GaussianLikelihood(lc, space=space)
+        if predict_torch is not None and lik.space != "flux":
+            raise ValueError("predict_torch (GPU simulation) currently supports flux-space data only; "
+                             f"got space={lik.space!r}.")
 
         times = np.asarray(lc.time, dtype=float)
         bands = np.asarray(lc.band)
@@ -232,16 +282,43 @@ class SNPESampler(BaseSampler):
         param_names = list(prior.names)
         k, n = len(param_names), int(len(times))
 
-        torch.manual_seed(int(seed))
+        # Constant context channels for the stacked layout: per-point error, time, integer band code.
+        sig_clean = np.where(np.isfinite(np.asarray(lik.sigma, float)) & (np.asarray(lik.sigma) > 0),
+                             np.asarray(lik.sigma, float), 1.0)
+        if x_format == "stacked":
+            band_codes = np.unique(bands, return_inverse=True)[1].astype(float)
+            extra = np.concatenate([sig_clean, times, band_codes])
+            n_channels = 4
+        else:
+            extra, n_channels = None, 1
+
+        torch.manual_seed(int(seed))                       # BEFORE building nets: embedding init draws
+        emb_spec = (embedding_net if isinstance(embedding_net, str)
+                    else type(embedding_net).__name__ if embedding_net is not None else None)
+        if isinstance(embedding_net, str):
+            from ..embeddings import build_embedding
+            embedding_net = build_embedding(embedding_net, n_points=n, n_channels=n_channels,
+                                            latent_dim=int(embedding_latent))
+
         device = _resolve_device(device, torch)            # 'auto'/'gpu' -> 'cuda'/'cpu', with fallback
         torch_prior = _to_torch_prior(prior, sb, device)   # prior tensors must match the training device
         torch_prior, _, prior_returns_numpy = sb.process_prior(torch_prior)
-        simulator = _build_simulator(
-            predict, param_names, times, bands, lik.model_in_space, lik.sigma, torch, seed)
-        simulator = sb.process_simulator(simulator, torch_prior, prior_returns_numpy)
-        sb.check_sbi_inputs(simulator, torch_prior)
+        if predict_torch is None:
+            simulator = _build_simulator(
+                predict, param_names, times, bands, lik.model_in_space, lik.sigma, torch, seed, extra)
+            simulator = sb.process_simulator(simulator, torch_prior, prior_returns_numpy)
+            sb.check_sbi_inputs(simulator, torch_prior)
+            times_t = sig_t = extra_t = None
+        else:
+            times_t = torch.as_tensor(times, dtype=torch.float32, device=device)
+            sig_t = torch.as_tensor(sig_clean, dtype=torch.float32, device=device)
+            extra_t = (None if extra is None
+                       else torch.as_tensor(extra, dtype=torch.float32, device=device))
 
-        x_o = torch.as_tensor(np.asarray(lik.y, dtype=float), dtype=torch.float32).to(device)
+        x_np = np.asarray(lik.y, dtype=float)
+        if extra is not None:
+            x_np = np.concatenate([x_np, extra])
+        x_o = torch.as_tensor(x_np, dtype=torch.float32).to(device)
         de_builder = _build_density_estimator(
             density_estimator, embedding_net, hidden_features, num_transforms, num_bins)
         inference = sb.NPE(prior=torch_prior, density_estimator=de_builder,
@@ -252,9 +329,13 @@ class SNPESampler(BaseSampler):
         proposal = torch_prior
         posteriors = []
         for r in range(int(num_rounds)):
-            theta, x = sb.simulate_for_sbi(
-                simulator, proposal, num_simulations=int(num_simulations),
-                num_workers=num_workers, seed=int(seed) + r, show_progress_bar=show_progress)
+            if predict_torch is not None:
+                theta, x = _torch_simulate(proposal, num_simulations, predict_torch, times_t, sig_t,
+                                           extra_t, torch, int(seed) + 7919 * r, show_progress)
+            else:
+                theta, x = sb.simulate_for_sbi(
+                    simulator, proposal, num_simulations=int(num_simulations),
+                    num_workers=num_workers, seed=int(seed) + r, show_progress_bar=show_progress)
             if restricted:
                 # Truncated SNPE: the proposal is a RestrictedPrior (not a posterior) -> first-round loss.
                 de_net = inference.append_simulations(theta, x, exclude_invalid_x=True).train(
@@ -274,7 +355,7 @@ class SNPESampler(BaseSampler):
                         posterior, quantile=float(truncate_quantile),
                         num_samples_to_estimate_support=int(support_samples))
                     proposal = sb.RestrictedPrior(
-                        torch_prior, accept_reject_fn, sample_with="rejection")
+                        torch_prior, accept_reject_fn, sample_with="rejection", device=device)
                 else:
                     proposal = posterior
         runtime = time.perf_counter() - t0
@@ -303,7 +384,9 @@ class SNPESampler(BaseSampler):
             "num_rounds": int(num_rounds), "num_simulations": int(num_simulations),
             "total_simulations": int(num_rounds) * int(num_simulations),
             "density_estimator": density_estimator if isinstance(density_estimator, str) else "custom",
-            "embedding_net": type(embedding_net).__name__ if embedding_net is not None else None,
+            "embedding_net": emb_spec,
+            "x_format": x_format,
+            "sim_backend": "torch" if predict_torch is not None else "numpy",
             "proposal_mode": proposal_mode,
             "truncate_quantile": float(truncate_quantile) if proposal_mode == "restricted" else None,
             "space": lik.space, "num_samples": int(num_samples), "device": str(device),
@@ -320,6 +403,20 @@ class SNPESampler(BaseSampler):
         # Attach the trained sbi objects for resampling / pairplot (not part of to_json).
         result.posterior = posterior
         result.posteriors = posteriors
+
+        def format_x(values):
+            """Map a raw data-space vector (n,) to the network's conditioning input on ``device``,
+            appending THIS fit's context channels (errors/times/bands) when ``x_format='stacked'``.
+            Use it to condition the amortized posterior on a new observation **taken on the same
+            observing grid** (same cadence, errors and bands — e.g. simulation-based calibration
+            realizations). An observation with a different grid needs a re-trained network — do not
+            feed it through this closure, and note the input length is checked only by the network."""
+            v = np.asarray(values, dtype=float).ravel()
+            if extra is not None:
+                v = np.concatenate([v, extra])
+            return torch.as_tensor(v, dtype=torch.float32).to(device)
+
+        result.format_x = format_x
         return result
 
 

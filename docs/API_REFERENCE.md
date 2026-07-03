@@ -218,20 +218,28 @@ four reach the same posterior on the same data (see `scripts/compare_samplers.py
 |---|---|---|
 | `n_simulations` | `10000` | Total prior draws / simulations. |
 | `quantile` | `0.01` | Accept the best fraction by distance (robust default). |
-| `threshold` | `None` | Fixed acceptance distance ε (overrides `quantile` if set). |
+| `threshold` | `None` | Fixed acceptance distance ε (overrides `quantile` if set). **Scale warning:** with `simulate_noise=True`, `E[D] ≈ χ² + n_points` — re-derive old noiseless thresholds. |
 | `distance` | `chi2_distance` | Distance function. |
+| `simulate_noise` | `True` | Add per-point `N(0, flux_err)` white noise to each simulation so it matches the data's generative model — makes ABC exact as ε→0 and its **width calibrated** (`False` = old noiseless shell behaviour). |
 | `n_jobs` | `None` (→ min(cpu, 8)) | Processes for parallel simulation. |
 | `seed` | `0` | RNG seed (independent streams per worker via `SeedSequence`). |
 
+`best_params` (and the AIC/BIC evaluated there) are selected by the **exact Gaussian log-likelihood**
+over the accepted draws — never by the noisy distance, whose argmin is the luckiest noise draw.
+
 **`ABCSMCSampler.fit(lc, model, prior=None, *, n_particles=500, n_rounds=5, epsilon_schedule=None,
-quantile=0.5, min_epsilon=None, perturbation_scale=0.1, distance=chi2_distance, n_jobs=None, seed=0)`**
+quantile=0.5, min_epsilon=None, simulate_noise=True, perturbation_scale=0.1, distance=chi2_distance,
+n_jobs=None, seed=0)`**
 — sequential rejection: round 0 draws from the prior; later rounds resample + Gaussian-perturb accepted
 particles under a shrinking epsilon (explicit `epsilon_schedule`, or adaptive `quantile` of the previous
 round's distances). Perturbs only parameters and rejects proposals outside the prior; `info` carries
 per-round epsilon / acceptance / `total_simulations`. **`min_epsilon`** floors the adaptive epsilon so it
 is not driven to `χ²_min` (which collapses the posterior onto the MLE → overconfident): `"auto"` floors
 it at **`χ²_min + 2(k+2)`** (`k` = #parameters), reproducing the Gaussian posterior width; a float sets a
-fixed floor (default `None` = no floor).
+fixed floor (default `None` = no floor). **`simulate_noise=True`** (default) adds per-point
+`N(0, flux_err)` noise to every simulation — the smooth acceptance kernel that keeps the SMC posterior
+width calibrated; note it shifts the distance scale (`E[D] ≈ χ² + n_points`), so old noiseless
+`epsilon_schedule`/float-`min_epsilon` values must be re-derived (the adaptive quantile handles it).
 
 **`MCMCSampler.fit(lc, model, prior=None, *, nwalkers=None, nsteps=5000, burnin=1000, thin=10,
 initial_guess=None, initial_scatter=1e-3, space="auto", likelihood="auto", seed=0, progress=False,
@@ -246,19 +254,30 @@ autocorrelation time; the `emcee.EnsembleSampler` is attached as `result.emcee_s
 is the convenience wrapper.
 
 **`SNPESampler.fit(lc, model, prior=None, *, num_rounds=2, num_simulations=1000, space="auto",
-density_estimator="maf", embedding_net=None, hidden_features=None, num_transforms=None, num_bins=None,
-proposal_mode="posterior", truncate_quantile=1e-4, support_samples=10000, num_samples=10000,
-device="cpu", seed=0, show_progress=False, num_workers=1, max_logl_scan=2000, **train_kwargs)`** —
+density_estimator="maf", embedding_net=None, embedding_latent=32, x_format="value", predict_torch=None,
+hidden_features=None, num_transforms=None, num_bins=None, proposal_mode="posterior",
+truncate_quantile=1e-4, support_samples=10000, num_samples=10000, device="cpu", seed=0,
+show_progress=False, num_workers=1, max_logl_scan=2000, **train_kwargs)`** —
 Sequential Neural Posterior Estimation via `sbi` (`samplers.snpe`). Needs the optional **`[sbi]`** extra
-(sbi + torch; imported lazily). The simulator is Whisper's forward model + Gaussian noise from the data
-errors; the prior is adapted automatically (`Uniform`→`BoxUniform`, mixed `Uniform`/`LogUniform`→
-`MultipleIndependent`). `num_rounds=1` is amortized NPE, `>1` is sequential; `num_simulations` is per
-round; `space` ('auto'|'flux'|'magnitude') matches the likelihood; `num_workers` parallelizes simulation.
+(sbi + torch; imported lazily). The simulator is Whisper's forward model + **per-point Gaussian noise
+from the data errors**; the prior is adapted automatically (`Uniform`→`BoxUniform`, mixed
+`Uniform`/`LogUniform`→`MultipleIndependent`). `num_rounds=1` is amortized NPE, `>1` is sequential;
+`num_simulations` is per round; `space` ('auto'|'flux'|'magnitude') matches the likelihood;
+`num_workers` parallelizes simulation.
 
-- **Density estimator (flexible):** `density_estimator` is an estimator name **or** a pre-built
-  `posterior_nn(...)` factory; pass an **`embedding_net`** (`torch.nn.Module`; input dim = number of
-  light-curve points) and/or `hidden_features` / `num_transforms` / `num_bins` to build a custom
-  architecture.
+- **Input layout:** `x_format="value"` conditions on the data-space values alone; `"stacked"` on the
+  full observation tuple — `(value, error, time, band code)` channels concatenated per point, the same
+  information the likelihood-based samplers receive (and what an embedding net needs to exploit
+  cadence/noise structure).
+- **Density estimator + embeddings:** `density_estimator` is an estimator name **or** a pre-built
+  `posterior_nn(...)` factory. **`embedding_net`** is `None`, a built-in name — **`"mlp"`** or
+  **`"tcn"`** (Temporal Convolutional Network: dilated causal convolutions for time series; see
+  `whisper_labia.embeddings`), compressed to `embedding_latent` features and trained jointly — or any
+  `torch.nn.Module`; `hidden_features` / `num_transforms` / `num_bins` build a custom architecture.
+- **GPU simulation:** `predict_torch(theta, times) -> flux` (batched torch model: `(B, D)` params +
+  `(n,)` times → `(B, n)` flux) replaces the per-row Python simulator with one on-device batched call
+  (~10³× faster simulation; flux-space only). `result.format_x(values)` maps a raw vector to the
+  network's conditioning input (same observing grid) for amortized reuse.
 - **Sequential scheme:** `proposal_mode='posterior'` (SNPE-C, default) or `'restricted'` (truncated SNPE
   via `RestrictedPrior` + `get_density_thresholder(quantile=truncate_quantile)`; support estimated from
   `support_samples` draws — kept modest, since sbi's default 1e6 can take hours; rejection sampling makes
@@ -375,7 +394,7 @@ Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `scripts/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (195 tests, all passing)
+## 8. Test coverage (201 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -386,6 +405,7 @@ Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`
 | `test_plotting.py` | 7 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers; `plot_corner` overlay/legend, common-params + log axes + array/empty errors. |
 | `test_metrics.py` | 4 | WAIC keys + finite + better-fit-lower ordering, `fixed=`/subsampling, and pointwise log-lik (Gaussian + upper-limits) summing to the total. |
 | `test_validation.py` | 4 | recovery z-score + coverage signs, PPC (reduced χ²≈1, predictive coverage, p≈0.5), SBC rank uniformity (calibrated vs edge-biased), `sbc_rank` bounds. |
+| `test_embeddings.py` | 6 | MLP/TCN embedding shapes + finite output, TCN receptive field covers the input, `build_embedding` dispatch + unknown-name error, `x_format` validation, ABC `simulate_noise` (n_jobs-reproducible, optional, noisy-vs-noiseless distance floor). |
 | `test_review_fixes.py` | 6 | scientific-review fixes: ABC exact-likelihood AIC, ABC-SMC importance weighting, WAIC drops draws not data points, mck19 π factor, CCM89 out-of-range clamp, non-positive-flux→mag guard. |
 | `test_priors.py` | 6 | Uniform/LogUniform/Prior sampling, log_prob, rescale, picklability. |
 | `test_models.py` | 8 | flare/bazin/gaussian_rise (incl. flare pre-explosion=0, bazin tail→0), custom model, errors. |

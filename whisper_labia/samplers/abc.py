@@ -22,12 +22,19 @@ from ..models import get_model
 from .base import BaseSampler, SamplerResult, summarize_posterior
 
 
-def _simulate_batch(predict, prior, distance, times, bands, obs_flux, obs_err, indices, seed):
+def _simulate_batch(predict, prior, distance, times, bands, obs_flux, obs_err, indices, seed,
+                    simulate_noise):
     """Simulate the given **global** simulation indices.
 
     Each index ``i`` draws from its own RNG stream ``default_rng([seed, i])``, so the set of draws is
     identical no matter how the indices are chunked across workers. This makes the result fully
     reproducible for a fixed ``seed`` **regardless of ``n_jobs``** (the machine's core count).
+
+    With ``simulate_noise`` the simulation matches the generative model of the data — per-point white
+    noise ``N(0, obs_err)`` is added to the model prediction (drawn from the same per-index stream, so
+    reproducibility is preserved). Comparing *noisy* simulations to the noisy data is what makes ABC
+    exact in the small-epsilon limit; a noiseless simulator under a hard distance cut targets a
+    likelihood *shell* instead, which mis-shapes the posterior width.
     """
     thetas = []
     distances = np.empty(len(indices), dtype=float)
@@ -35,6 +42,8 @@ def _simulate_batch(predict, prior, distance, times, bands, obs_flux, obs_err, i
         rng = np.random.default_rng([int(seed), int(idx)])
         theta = prior.sample(rng)
         sim = np.asarray(predict(theta, times, bands), dtype=float)
+        if simulate_noise:
+            sim = sim + rng.normal(0.0, obs_err)
         distances[j] = distance(obs_flux, obs_err, sim, bands)
         thetas.append(theta)
     return thetas, distances
@@ -50,7 +59,7 @@ class ABCSampler(BaseSampler):
     name = "abc"
 
     def fit(self, lc, model, prior=None, *, n_simulations=10000, quantile=0.01, threshold=None,
-            distance=chi2_distance, n_jobs=None, seed=0):
+            distance=chi2_distance, simulate_noise=True, n_jobs=None, seed=0):
         """Fit ``lc`` with ``model`` by rejection ABC, returning a :class:`SamplerResult`.
 
         Parameters
@@ -67,8 +76,17 @@ class ABCSampler(BaseSampler):
             Acceptance fraction — keep the closest ``quantile`` of draws (robust default).
         threshold : float, optional
             Fixed acceptance distance epsilon; overrides ``quantile`` when given.
+            **Scale warning:** with ``simulate_noise=True`` (default) distances include the simulation
+            noise — ``E[D] ≈ χ² + n_points`` with roughly doubled per-point variance — so a threshold
+            calibrated against the old noiseless χ² scale will accept (near) nothing. Re-derive fixed
+            thresholds, or use ``quantile`` (which adapts automatically).
         distance : callable, default :func:`chi2_distance`
             ``f(obs_flux, obs_err, sim_flux, bands) -> float``. Must be picklable for ``n_jobs > 1``.
+        simulate_noise : bool, default True
+            Add per-point white noise ``N(0, flux_err)`` to each simulation so it matches the
+            generative model of the data (measurement noise included). This is what makes ABC exact
+            as epsilon → 0 and keeps the posterior width **calibrated**; ``False`` restores the old
+            noiseless-simulator behaviour (a hard cut on a likelihood shell, mis-shaped width).
         n_jobs : int, optional
             Worker processes (default ``min(os.cpu_count(), 8)``). **The result is independent of
             ``n_jobs``** for a fixed ``seed`` — parallelism affects speed only, not the science.
@@ -107,12 +125,12 @@ class ABCSampler(BaseSampler):
         dist_parts = []
         if n_jobs == 1:
             th, ds = _simulate_batch(predict, prior, distance, times, bands,
-                                     obs_flux, obs_err, index_chunks[0], seed)
+                                     obs_flux, obs_err, index_chunks[0], seed, simulate_noise)
             thetas.extend(th)
             dist_parts.append(ds)
         else:
-            args = [(predict, prior, distance, times, bands, obs_flux, obs_err, idx, seed)
-                    for idx in index_chunks]
+            args = [(predict, prior, distance, times, bands, obs_flux, obs_err, idx, seed,
+                     simulate_noise) for idx in index_chunks]
             with ProcessPoolExecutor(max_workers=n_jobs) as executor:
                 for th, ds in executor.map(_worker, args):
                     thetas.extend(th)
@@ -132,19 +150,27 @@ class ABCSampler(BaseSampler):
 
         # Model-selection metrics. The chi-square distance drops the Gaussian normalisation and is
         # always in flux space; to make AIC/BIC **comparable across samplers** (MCMC/SNPE use the exact
-        # Gaussian log-likelihood in the data's natural space), evaluate that same likelihood at the
-        # best fit here too.
-        chi2_min = float(distances.min())
+        # Gaussian log-likelihood in the data's natural space), evaluate that same likelihood here too.
+        # With simulate_noise the noisy-distance argmin is the *luckiest simulation-noise draw*, not the
+        # best theta — so the best fit is chosen by the exact log-likelihood over the accepted draws
+        # (deterministically capped scan), never by the noisy distance.
+        chi2_min = float(distances.min())     # noisy scale when simulate_noise: E[D] ~ chi2 + n_points
         k, n = len(model.parameters), lc.n_points
-        best = thetas[int(np.argmin(distances))]
         lik = make_likelihood(lc)
-        max_log_likelihood = float(lik.log_likelihood(np.asarray(predict(best, times, bands), dtype=float)))
+        cand = accepted if accepted else [thetas[int(np.argmin(distances))]]
+        scan = cand[:2000]
+        logls = np.array([lik.log_likelihood(np.asarray(predict(th, times, bands), dtype=float))
+                          for th in scan], dtype=float)
+        best_idx = int(np.nanargmax(logls)) if np.any(np.isfinite(logls)) else 0
+        best = {p: float(scan[best_idx][p]) for p in model.parameters}
+        max_log_likelihood = float(logls[best_idx])
         info = {
             "n_simulations": int(n_simulations),
             "n_accepted": int(keep.sum()),
             "acceptance_rate": float(keep.mean()),
             "epsilon": epsilon,
             "quantile": None if threshold is not None else float(quantile),
+            "simulate_noise": bool(simulate_noise),
             "n_jobs": int(n_jobs),
             "distance": getattr(distance, "__name__", str(distance)),
             "likelihood_space": lik.space,

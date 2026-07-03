@@ -6,10 +6,12 @@ and GPU neural SBI), and check each **recovers the truth** with **calibrated unc
 timing everything. Mocks: a physically-motivated **Bazin (2009) supernova light curve** (headline
 showcase; fit with MDN and NSF density estimators at a 30k-simulation budget), a 4-parameter damped
 sinusoid (stress test: correlated, oscillatory), and a 2/4/6-parameter Gaussian-pulse family
-(dimensionality sweep). The neural methods use **no embedding net** — the raw light-curve vector is the
-conditioning input. Statistics: per-parameter z-score + credible-interval coverage, posterior-predictive
-checks (reduced χ² + predictive coverage), and Simulation-Based Calibration (rank uniformity). Outputs
-land in ``docs/figures/sanity_check/``.
+(dimensionality sweep). The Bazin neural methods condition on the **stacked (value, err, time, band)
+tuple** with GPU-vectorized simulation; the SNPE-5-round benchmark compares no embedding vs an MLP vs a
+TCN embedding. ABC/ABC-SMC simulations are **noise-matched** (per-point ``flux_err`` white noise).
+Statistics: per-parameter z-score + credible-interval coverage, posterior-predictive checks (reduced χ²
++ predictive coverage), and Simulation-Based Calibration (rank uniformity). Outputs land in
+``docs/figures/sanity_check/``.
 
     # one config at a time (parallel-friendly; give each GPU method its own GPU), then render:
     CUDA_VISIBLE_DEVICES=0 python scripts/sanity_check.py fit bazin_sn npe_mdn
@@ -48,6 +50,18 @@ BAZIN_SEED = 0                     # Bazin showcase (screened; worst |z_fisher| 
 
 # ------------------------------------------------------------------ mock models (module-level = picklable)
 _PULSE_SIGMA = 1.5                 # fixed Gaussian-pulse width for the sweep family
+
+
+def bazin_flux_torch(theta, times):
+    """Batched torch Bazin: theta (B, 4) = [amplitude, t0, tau_rise, tau_fall], times (n,) -> (B, n).
+
+    Device-agnostic (runs on whatever device the tensors live on) — one kernel launch simulates the
+    whole batch, replacing the per-row Python loop for GPU simulation (``predict_torch``)."""
+    import torch
+    A, t0, tr, tf = theta[:, 0:1], theta[:, 1:2], theta[:, 2:3], theta[:, 3:4]
+    dt = times.unsqueeze(0) - t0
+    log_flux = -dt / tf - torch.logaddexp(torch.zeros_like(dt), -dt / tr)   # matches models.bazin
+    return A * torch.exp(torch.clamp(log_flux, -80.0, 80.0))               # float32-safe clip
 
 
 def mock_damped_sine_flux(parameters, times, bands=None):
@@ -100,7 +114,7 @@ MOCKS = {
         "prior": Prior({"amplitude": Uniform(0.5, 15.0), "t0": Uniform(5.0, 40.0),
                         "tau_rise": Uniform(0.5, 12.0), "tau_fall": Uniform(5.0, 60.0)}),
         "truth": {"amplitude": 5.0, "t0": 20.0, "tau_rise": 4.0, "tau_fall": 25.0},
-        "tmax": 70.0, "npts": 80, "seed": BAZIN_SEED,
+        "tmax": 70.0, "npts": 80, "seed": BAZIN_SEED, "predict_torch": bazin_flux_torch,
         "desc": "Bazin (2009) SN: `A·exp(−(t−t0)/τ_fall) / (1+exp(−(t−t0)/τ_rise))`", "log": [],
     },
     "damped_sine": {
@@ -118,9 +132,11 @@ for _k in (1, 2, 3):
     MOCKS[f"gp{2 * _k}"] = {"predict": mock_gauss_pulses_flux, "params": _p, "prior": _pr,
                             "truth": _tr, "tmax": 24.0, "npts": 90, "seed": SWEEP_SEED, "log": []}
 
-# sampler key -> (label, fit function, kwargs). NPE = 1 round (amortized); SNPE = 10 sequential rounds.
-# Neural methods: GPU training, NO embedding net (the raw light-curve vector is the conditioning input —
-# fit_SNPE's default), density estimator MDN (fast mixture) or NSF (expressive spline flow).
+# sampler key -> (label, fit function, kwargs). NPE = 1 round (amortized); SNPE = sequential rounds.
+# Bazin neural configs: GPU training + GPU-vectorized simulation, stacked (value, err, time, band)
+# input; density estimator MDN (fast mixture) or NSF (expressive spline flow); the snpe5_* trio
+# benchmarks no-embedding vs MLP vs TCN. The legacy npe/snpe MAF configs (damped_sine + sweep results)
+# keep the raw value-vector input.
 SAMPLERS = {
     "mcmc": ("MCMC", wp.fit_MCMC, dict(nsteps=6000, burnin=1500, thin=4, space="flux", seed=0)),
     "abc": ("ABC", wp.fit_ABC, dict(n_simulations=300_000, quantile=0.002, n_jobs=8, seed=0)),
@@ -133,27 +149,39 @@ SAMPLERS = {
     "snpe": ("SNPE-MAF (GPU)", wp.fit_SNPE,
              dict(num_rounds=10, num_simulations=1000, num_samples=2000, space="flux",
                   device="cuda", seed=0, max_num_epochs=80)),           # SNPE-C, 10 sequential rounds
-    # Bazin-showcase configs: 30k total simulations each, large GPU batches, early stopping
+    # Bazin-showcase NPE: 30k sims, GPU-vectorized simulation (use_torch_sim -> spec["predict_torch"]),
+    # stacked (value, err, time, band) input, large batches + tighter early-stop patience for speed.
     "npe_mdn": ("NPE-MDN (GPU)", wp.fit_SNPE,
                 dict(num_rounds=1, num_simulations=30_000, num_samples=10_000, space="flux",
-                     density_estimator="mdn", device="cuda", seed=0,
-                     max_num_epochs=300, training_batch_size=1000)),
+                     density_estimator="mdn", x_format="stacked", use_torch_sim=True,
+                     device="cuda", seed=0,
+                     max_num_epochs=300, training_batch_size=1000, stop_after_epochs=15)),
     "npe_nsf": ("NPE-NSF (GPU)", wp.fit_SNPE,
                 dict(num_rounds=1, num_simulations=30_000, num_samples=10_000, space="flux",
-                     density_estimator="nsf", device="cuda", seed=0,
-                     max_num_epochs=300, training_batch_size=1000)),
-    # MDN runs the TRUNCATED sequential scheme (proposal_mode="restricted"): sbi 0.23.3's SNPE-C
-    # non-atomic MoG loss (auto-selected for MDN proposals) has a CUDA device-mismatch bug, and the
-    # truncated variant trains with the plain NPE loss each round — sequential, GPU, bug-free.
-    "snpe_mdn": ("SNPE-MDN (GPU)", wp.fit_SNPE,
-                 dict(num_rounds=10, num_simulations=3000, num_samples=10_000, space="flux",
-                      density_estimator="mdn", device="cuda", seed=0,
-                      proposal_mode="restricted", support_samples=5000,
-                      max_num_epochs=100, training_batch_size=500)),
-    "snpe_nsf": ("SNPE-NSF (GPU)", wp.fit_SNPE,
-                 dict(num_rounds=10, num_simulations=3000, num_samples=10_000, space="flux",
-                      density_estimator="nsf", device="cuda", seed=0,
-                      max_num_epochs=100, training_batch_size=500)),
+                     density_estimator="nsf", x_format="stacked", use_torch_sim=True,
+                     device="cuda", seed=0,
+                     max_num_epochs=300, training_batch_size=1000, stop_after_epochs=15)),
+    # SNPE embedding benchmark: 5 sequential rounds x 3000 sims (NSF), identical except the embedding:
+    # none (raw stacked vector) vs MLP compressor vs Temporal Convolutional Network (see embeddings.py).
+    # Runs the TRUNCATED sequential scheme (proposal_mode="restricted", TSNPE): SNPE-C's between-round
+    # posterior sampling reliably hits nflows spline assertions (leakage) at these budgets.
+    "snpe5_plain": ("SNPE-5r (GPU, no embed)", wp.fit_SNPE,
+                    dict(num_rounds=5, num_simulations=3000, num_samples=10_000, space="flux",
+                         density_estimator="nsf", x_format="stacked", use_torch_sim=True,
+                         device="cuda", seed=0, proposal_mode="restricted", support_samples=5000,
+                         max_num_epochs=120, training_batch_size=1000, stop_after_epochs=12)),
+    "snpe5_mlp": ("SNPE-5r (GPU, MLP embed)", wp.fit_SNPE,
+                  dict(num_rounds=5, num_simulations=3000, num_samples=10_000, space="flux",
+                       density_estimator="nsf", embedding_net="mlp", embedding_latent=32,
+                       x_format="stacked", use_torch_sim=True, device="cuda", seed=0,
+                       proposal_mode="restricted", support_samples=5000,
+                       max_num_epochs=120, training_batch_size=1000, stop_after_epochs=12)),
+    "snpe5_tcn": ("SNPE-5r (GPU, TCN embed)", wp.fit_SNPE,
+                  dict(num_rounds=5, num_simulations=3000, num_samples=10_000, space="flux",
+                       density_estimator="nsf", embedding_net="tcn", embedding_latent=32,
+                       x_format="stacked", use_torch_sim=True, device="cuda", seed=0,
+                       proposal_mode="restricted", support_samples=5000,
+                       max_num_epochs=120, training_batch_size=1000, stop_after_epochs=12)),
 }
 # lighter per-fit configs for the many-fit SBC loop (kept close to production so the calibration
 # verdict is fair; ABC keeps the production quantile=0.002 tolerance, only trimming the sim budget).
@@ -165,11 +193,11 @@ SBC_KW = {
     "npe": dict(num_rounds=1, num_simulations=5000, num_samples=2000, space="flux", device="cuda",
                 max_num_epochs=200),
     "npe_mdn": dict(num_rounds=1, num_simulations=30_000, num_samples=2000, space="flux",
-                    density_estimator="mdn", device="cuda", max_num_epochs=300,
-                    training_batch_size=1000),
+                    density_estimator="mdn", x_format="stacked", use_torch_sim=True, device="cuda",
+                    max_num_epochs=300, training_batch_size=1000, stop_after_epochs=15),
     "npe_nsf": dict(num_rounds=1, num_simulations=30_000, num_samples=2000, space="flux",
-                    density_estimator="nsf", device="cuda", max_num_epochs=300,
-                    training_batch_size=1000),
+                    density_estimator="nsf", x_format="stacked", use_torch_sim=True, device="cuda",
+                    max_num_epochs=300, training_batch_size=1000, stop_after_epochs=15),
 }
 # per-method realisations (10-round SNPE re-trains per realisation -> prohibitive; NPE covers neural SBC)
 SBC_L = {"mcmc": 100, "abc": 100, "abc_smc": 60, "npe": 200, "npe_mdn": 200, "npe_nsf": 200}
@@ -194,15 +222,37 @@ def _make_lc(mock, truth, seed):
 
 
 # --------------------------------------------------------------------------------- one timed fit + metrics
+def _resolve_kw(kw, spec):
+    """Expand config flags that need the mock spec: use_torch_sim -> the mock's predict_torch."""
+    kw = dict(kw)
+    if kw.pop("use_torch_sim", False):
+        kw["predict_torch"] = spec.get("predict_torch")   # None -> fit_SNPE falls back to numpy loop
+    return kw
+
+
 def fit(mock, sampler):
     name = _register(mock)
     spec = MOCKS[mock]
     lc = _make_lc(mock, spec["truth"], spec["seed"])
     label, fn, kw = SAMPLERS[sampler]
+    kw = _resolve_kw(kw, spec)
 
     t0 = time.perf_counter()
     res = _robust_fit(fn, lc, name, spec["prior"], sampler, kw)
     wall = time.perf_counter() - t0
+
+    # Amortized per-object cost: for a TRAINED network, conditioning on a new observation and drawing
+    # 2000 posterior samples is the entire per-object inference (vs a full refit for MCMC/ABC). Timed
+    # on a FRESH noise realization (an unseen "new object" on the same grid), not the training x_o.
+    amortized = None
+    if hasattr(res, "posterior") and hasattr(res, "format_x"):
+        t = np.asarray(lc.time, float)
+        fresh = (spec["predict"](spec["truth"], t, None)
+                 + np.random.default_rng([spec["seed"], 424242]).normal(0.0, NOISE, t.shape))
+        xt = res.format_x(fresh)
+        t1 = time.perf_counter()
+        res.posterior.sample((2000,), x=xt, show_progress_bars=False)
+        amortized = time.perf_counter() - t1
 
     rec = wp.recovery_metrics(res, spec["truth"])
     ppc = wp.posterior_predictive_check(res, lc, name, n_draws=400, seed=0)
@@ -225,10 +275,12 @@ def fit(mock, sampler):
                 "coverage95": ppc["ppc_coverage95"], "bayesian_p_value": ppc["bayesian_p_value"],
                 "dof": ppc["dof"]},
         "runtime_s": float(res.runtime_s), "wall_s": float(wall), "n_samples": int(res.n_samples),
+        "amortized_s": (float(amortized) if amortized is not None else None),
         "aic": float(res.aic), "bic": float(res.bic), "waic": float(w),
         "info": {k: res.info.get(k) for k in ("converged", "mean_acceptance_fraction",
                                               "mean_autocorr_time", "device", "density_estimator",
-                                              "embedding_net", "num_rounds", "total_simulations")
+                                              "embedding_net", "num_rounds", "total_simulations",
+                                              "x_format", "sim_backend", "simulate_noise")
                  if k in res.info},
     }, open(os.path.join(OUT, f"sanity_{mock}_{sampler}.json"), "w"), indent=2, default=float)
     s = rec["_summary"]
@@ -278,21 +330,20 @@ def sbc(mock, sampler):
     t = np.linspace(0.5, spec["tmax"], spec["npts"])
     L = SBC_L[sampler]
     label, fn = SAMPLERS[sampler][0], SAMPLERS[sampler][1]
-    kw = SBC_KW[sampler]
+    kw = _resolve_kw(SBC_KW[sampler], spec)
     ranks = {p: [] for p in params}
     t0 = time.perf_counter()
 
     if sampler.startswith("npe"):
         # amortized: train ONCE on a reference realisation, then rank many by conditioning on new x.
-        import torch
         ref = _make_lc(mock, spec["truth"], spec["seed"])
         res = _robust_fit(fn, ref, name, prior, sampler, dict(kw, seed=0))
-        posterior, device = res.posterior, res.info.get("device", "cpu")
+        posterior = res.posterior
         for i in range(L):
             theta = prior.sample(np.random.default_rng([DATA_SEED, i]))
             x = predict(theta, t, None) + np.random.default_rng([DATA_SEED, i, 7]).normal(0, NOISE, t.shape)
-            xt = torch.as_tensor(np.asarray(x, dtype=np.float32)).to(device)
-            draws = posterior.sample((2000,), x=xt, show_progress_bars=False).detach().cpu().numpy()
+            draws = posterior.sample((2000,), x=res.format_x(x),
+                                     show_progress_bars=False).detach().cpu().numpy()
             for j, p in enumerate(params):
                 ranks[p].append(wp.sbc_rank(draws[:, j], theta[p]))
     else:

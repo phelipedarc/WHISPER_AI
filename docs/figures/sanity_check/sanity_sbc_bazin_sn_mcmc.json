@@ -3,7 +3,7 @@
   "sampler": "mcmc",
   "label": "MCMC",
   "L": 100,
-  "runtime_s": 433.2259088717401,
+  "runtime_s": 435.1057358495891,
   "diagnostics": {
     "amplitude": {
       "n_realizations": 100,

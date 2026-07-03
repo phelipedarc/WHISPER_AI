@@ -5,6 +5,32 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Calibrated likelihood-free inference + neural-SBI performance upgrade
+- **Noise-matched ABC/ABC-SMC (`simulate_noise=True`, new default).** Every simulation now adds
+  per-point white noise from the reported errors (`N(0, flux_err)`), matching the generative model of
+  the data — this is what makes ABC exact as ε→0 and its posterior **width calibrated** (a noiseless
+  simulator under a hard cut targets a likelihood shell). Reproducibility across `n_jobs` is preserved
+  (noise drawn from each simulation's own RNG stream). **Scale note:** distances now include the
+  simulation noise (`E[D] ≈ χ² + n_points`), so fixed `threshold`/`epsilon_schedule`/float
+  `min_epsilon` values from the noiseless era must be re-derived (adaptive quantiles handle it).
+  `best_params` (and AIC/BIC there) are now selected by the **exact Gaussian log-likelihood** over
+  accepted draws — never by the noisy distance, whose argmin is the luckiest noise realization.
+- **`whisper_labia.embeddings` (new):** `MLPEmbedding` and `TCNEmbedding` (Temporal Convolutional
+  Network — dilated causal 1-D convolutions with residual blocks, avg+max-pool head), buildable via
+  `fit_SNPE(..., embedding_net="mlp"|"tcn", embedding_latent=...)` and trained jointly with the
+  density estimator.
+- **`fit_SNPE` input & speed:** `x_format="stacked"` conditions the network on the full observation
+  tuple `(value, error, time, band)` — the same information the likelihood-based samplers get;
+  `predict_torch=` accepts a batched torch forward model and replaces the per-row Python simulator
+  with a single on-device call (**~2000× faster simulation**; 30k Bazin simulations in milliseconds);
+  `result.format_x` maps a raw vector to the network input for amortized reuse (same observing grid).
+  Fixed a CUDA device mismatch when truncated SNPE (`proposal_mode="restricted"`) is combined with
+  `predict_torch` (sbi's `RestrictedPrior` samples on CPU by default). Embedding weights are now
+  initialized after `torch.manual_seed`, making embedding benchmarks run-to-run reproducible.
+  Multi-GPU data-parallel training was evaluated and rejected: sbi 0.23 has no native support and
+  these networks are far too small to amortize synchronization — the effective multi-GPU strategy is
+  one method/config per GPU (how the benchmarks run).
+
 ### Inference-validation tools + synthetic-recovery sanity check
 - **`whisper_labia.validation`** — reusable, sampler-agnostic checks that a fit *recovered the truth*
   with *reliable uncertainties*: `recovery_metrics` (per-parameter bias, standardized z-score, 68/95%

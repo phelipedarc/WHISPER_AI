@@ -24,7 +24,9 @@ PRIMARIES = ["bazin_sn", "damped_sine"]     # showcases, headline first (each re
 SWEEP = ["gp2", "gp4", "gp6"]
 COLORS = dict(zip(["mcmc", "abc", "abc_smc", "npe", "snpe"], wp.CORNER_PALETTE))
 COLORS.update({"npe_mdn": "#c51b7d", "npe_nsf": "#01665e",       # dark, distinct hues for the
-               "snpe_mdn": "#252525", "snpe_nsf": "#b8860b"})    # MDN/NSF method variants
+               "snpe_mdn": "#252525", "snpe_nsf": "#b8860b",     # MDN/NSF method variants
+               "snpe5_plain": "#4d004b", "snpe5_mlp": "#7f2704", # 5-round embedding benchmark
+               "snpe5_tcn": "#00441b"})
 
 
 def _load(out):
@@ -216,28 +218,45 @@ def _showcase(res, sbc, mocks, samplers, primary):
     ms = _methods(res, primary, samplers)
     spec = mocks[primary]
     neural = [s for s in ms if s.startswith(("npe", "snpe"))]
+    fmts = {res[(primary, s)].get("info", {}).get("x_format") or "value" for s in neural}
+    embs = sorted({res[(primary, s)].get("info", {}).get("embedding_net") or "none" for s in neural})
+    if neural:                                       # describe the neural input from the results
+        fmt_txt = ("the stacked (value, err, time, band) tuple" if fmts == {"stacked"}
+                   else "the raw value vector" if fmts == {"value"}
+                   else "per-method input layouts (see configs)")
+        neural_txt = (f"; the neural methods train on GPU and condition on **{fmt_txt}** "
+                      f"(embeddings: {', '.join(embs)}).")
+    else:
+        neural_txt = "."
     lines = [f"## Showcase — {primary}", "",
              f"Mock {spec.get('desc', primary)} (truth "
              + ", ".join(f"{k}={v:g}" for k, v in spec["truth"].items())
-             + "), white noise σ=0.15. Every sampler fits the *same* data"
-             + ("; the neural methods train on GPU and condition **directly on the raw light-curve "
-                "vector (no embedding net)**." if neural else "."), "",
+             + "), white noise σ=0.15. Every sampler fits the *same* data" + neural_txt, "",
              "### Recovery, goodness-of-fit & speed", "",
-             "| method | max\\|z\\| | cov68 | cov95 | χ²_best | PPC cov68 | PPC cov95 | wall [s] | sims |",
-             "|---|---|---|---|---|---|---|---|---|"]
+             "| method | max\\|z\\| | cov68 | cov95 | χ²_best | PPC cov68 | PPC cov95 | wall [s] "
+             "| per-object [s] | sims |",
+             "|---|---|---|---|---|---|---|---|---|---|"]
     for s in ms:
         d = res[(primary, s)]; sm = d["recovery"]["_summary"]; pp = d["ppc"]
         sims = d.get("info", {}).get("total_simulations")
+        amort = d.get("amortized_s")
+        if d.get("info", {}).get("num_rounds") == 1:  # amortized NPE: measured, or unmeasured (old run)
+            per_obj = f"{amort:.2f}" if amort is not None else "—"
+        else:                                         # sequential/likelihood methods: refit per object
+            per_obj = f"{_wall(d):.1f}"
         lines.append(f"| {samplers[s][0]} | {sm['max_abs_z']:.2f} | {sm['coverage68']:.2f} | "
                      f"{sm['coverage95']:.2f} | {pp['reduced_chi2']:.2f} | {pp['coverage68']:.2f} | "
-                     f"{pp['coverage95']:.2f} | {_wall(d):.1f} | "
+                     f"{pp['coverage95']:.2f} | {_wall(d):.1f} | {per_obj} | "
                      f"{f'{sims:,}' if sims else '—'} |")
     lines += ["", "*max|z| = max over parameters of |median−true|/σ (≲2 ⇒ recovered). cov68/95 = fraction "
               "of parameters whose credible interval covers the truth. χ²_best≈1 ⇒ the model fits; PPC "
               "cov68/95 = fraction of data inside the noise-inflated predictive band (≈0.68/0.95 ⇒ "
               "calibrated). wall = end-to-end fit time (MCMC includes its MLE seeding; neural methods "
-              "include training + posterior sampling). Single noise realization, so per-parameter "
-              "coverage is coarse — SBC below is the calibration test over many realizations.*", ""]
+              "include training + posterior sampling). **per-object** = cost of inferring one NEW "
+              "observation: amortized 1-round NPE conditions the trained network and samples in "
+              "~a second — every other method pays a full refit. Single noise realization, so "
+              "per-parameter coverage is coarse — SBC below is the calibration test over many "
+              "realizations.*", ""]
 
     with_sbc = [s for s in ms if (primary, s) in sbc]
     if with_sbc:
@@ -308,20 +327,50 @@ def _report(out, res, sbc, mocks, samplers, shown):
               "**correlated** posterior with its diagonal-Gaussian kernel (on the damped sine: freq too "
               "wide, phase too narrow). Point recovery stays unbiased; the uncertainty *shape/width* is "
               "what suffers — exactly the likelihood-free approximation error SBC exists to reveal.",
-              "- **Neural SBI input.** No embedding net anywhere: the density estimators condition on "
-              "the raw light-curve vector. MDN (mixture density network) trains fastest and samples "
-              "directly; NSF (neural spline flow) is more expressive but costs more per epoch. Both are "
-              "GPU-trained; each method runs on its own GPU, so the four neural fits run in parallel.",
+              "- **Neural SBI input & embeddings.** The **Bazin-showcase** neural methods condition on "
+              "the **stacked observation tuple** `(value, error, time, band)` — the same information "
+              "the likelihood-based samplers receive — and the noise added to every simulation is the "
+              "**per-point reported error** (`flux_err`), matching the generative model of the data. "
+              "The SNPE-5-round benchmark compares three inputs to the NSF estimator: the raw stacked "
+              "vector, an **MLP** compressor, and a **TCN** (Temporal Convolutional Network — dilated "
+              "causal convolutions specialized for time series), each trained jointly with the "
+              "estimator to a 32-feature latent. (The legacy damped-sine/sweep MAF rows predate this "
+              "and condition on the raw value vector.)",
+              "- **Noise-matched ABC — necessary, not sufficient.** `simulate_noise=True` (now the "
+              "default) adds per-point `N(0, flux_err)` to every ABC/ABC-SMC simulation: the correct "
+              "generative model, it removes the noiseless-shell pathology and makes ABC exact as ε→0. "
+              "**Measured outcome (SBC):** at practical acceptance budgets the finite-tolerance width "
+              "inflation still dominates — on the Bazin mock the ABC posterior is ~8× and the "
+              "ε-floored ABC-SMC ~3× the Fisher width, so their rank-uniformity p stays ≈0 "
+              "(under-confident), statistically unchanged from the noiseless run. Driving ε low "
+              "enough to calibrate rejection ABC needs an infeasible simulation budget; the "
+              "calibrated routes on this problem are exact MCMC and NPE-NSF.",
               "- **Identifiable pulses.** A sum of Gaussians is invariant under permuting its (Aₖ,μₖ) "
               "pairs, so the sweep gives each μₖ a disjoint prior bin; otherwise every sampler is free "
               "to label-switch (a spurious multi-modal 'failure').",
-              "- **SNPE cost & why MCMC can still be faster.** For a cheap *analytic* likelihood, "
-              "MCMC evaluates it directly — seconds. Neural SBI must first *learn* the posterior from "
-              "simulations, so its wall-clock is training-dominated; it pays off when the simulator is "
-              "expensive or the likelihood intractable (its real use case), and NPE amortizes: train "
-              "once, infer instantly for any new observation. SBC over many realizations exploits "
-              "exactly that amortization; re-training 10-round SNPE per realization is left out as "
-              "prohibitive (its single-dataset recovery + PPC stand in).", ""]
+              "- **SNPE speed diagnosis (GPU).** Profiling shows three cost centres, now addressed: "
+              "(1) *simulation* — the per-row Python loop is replaced by a **batched torch simulator "
+              "on the GPU** (`predict_torch`), ~2000× faster (30k Bazin simulations in milliseconds); "
+              "(2) *training* — small nets underutilize an A6000 (a few % GPU load: kernel-launch "
+              "latency dominates), so the lever is larger batches (`training_batch_size=1000`) and "
+              "tighter early-stop patience (`stop_after_epochs`), not more GPUs — **multi-GPU "
+              "data-parallel training does not help here** (sbi 0.23 has no native support and these "
+              "networks are far too small to amortize inter-GPU synchronization; the effective "
+              "multi-GPU strategy is one method/config per GPU, which is how these benchmarks run); "
+              "(3) *between-round posterior sampling* — rejection sampling under leakage; fewer, "
+              "larger rounds (5×3000) cut it. JAX was considered for (1) but is not installed in this "
+              "environment; the torch path already reduces simulation to a negligible cost.",
+              "- **Why exact-likelihood MCMC is still faster on THIS problem — and when SNPE wins.** "
+              "A 4-parameter analytic Bazin likelihood costs microseconds, so MCMC's ~10⁵ sequential "
+              "evaluations finish in seconds; no amount of GPU engineering makes *learning* a "
+              "posterior cheaper than *evaluating* that likelihood. Neural SBI wins in its actual use "
+              "cases: (a) **expensive/intractable simulators** (a kilonova model at ~0.1 s/call turns "
+              "MCMC into hours while SNPE needs a fixed, parallelizable simulation budget), and (b) "
+              "**amortization** — the per-object column above: after one training, NPE infers a NEW "
+              "light curve in ~a second, vs a full refit for every likelihood method. SBC over many "
+              "realizations exploits exactly that amortization; re-training sequential SNPE per "
+              "realization is left out as prohibitive (its single-dataset recovery + PPC stand in).",
+              ""]
 
     lines += ["## Dimensionality sweep (2/4/6 params, Gaussian pulses)", "",
               "| method | " + " | ".join(f"{d}p max\\|z\\| / t[s]" for d in (2, 4, 6)) + " |",

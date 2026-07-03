@@ -57,7 +57,8 @@ def _smc_batch(args):
     worker) makes the proposals — and hence the population — independent of ``n_jobs``.
     """
     (round_idx, parents_arr, parent_weights, param_names, kernel_std, prior,
-     predict, distance, times, bands, obs_flux, obs_err, epsilon, indices, seed) = args
+     predict, distance, times, bands, obs_flux, obs_err, epsilon, indices, seed,
+     simulate_noise) = args
     accepted = []
     for a in indices:
         rng = np.random.default_rng([int(seed), int(round_idx), int(a)])
@@ -70,6 +71,8 @@ def _smc_batch(args):
             if not np.isfinite(prior.log_prob(theta)):                   # outside prior support -> reject
                 continue
         sim = np.asarray(predict(theta, times, bands), dtype=float)
+        if simulate_noise:                       # generative match: same per-point noise as the data
+            sim = sim + rng.normal(0.0, obs_err)
         d = distance(obs_flux, obs_err, sim, bands)
         if d < epsilon:
             rec = dict(theta)
@@ -98,8 +101,8 @@ class ABCSMCSampler(BaseSampler):
     name = "abc_smc"
 
     def fit(self, lc, model, prior=None, *, n_particles=500, n_rounds=5, epsilon_schedule=None,
-            quantile=0.5, min_epsilon=None, perturbation_scale=0.1, distance=chi2_distance,
-            n_jobs=None, seed=0, max_attempts_per_round=None):
+            quantile=0.5, min_epsilon=None, simulate_noise=True, perturbation_scale=0.1,
+            distance=chi2_distance, n_jobs=None, seed=0, max_attempts_per_round=None):
         """Fit ``lc`` with ``model`` via importance-weighted ABC-SMC, returning a :class:`SamplerResult`.
 
         Parameters
@@ -117,6 +120,10 @@ class ABCSMCSampler(BaseSampler):
         epsilon_schedule : list of float, optional
             Explicit per-round acceptance thresholds; if ``None``, epsilon is adaptive
             (next epsilon = ``quantile`` of the current round's accepted distances).
+            **Scale warning:** with ``simulate_noise=True`` (default) distances include the simulation
+            noise (``E[D] ≈ χ² + n_points``); schedules or float ``min_epsilon`` values calibrated
+            against the old noiseless χ² scale sit below the achievable floor and will exhaust
+            ``max_attempts_per_round``. Re-derive them, or rely on the adaptive quantile schedule.
         quantile : float, default 0.5
             Adaptive-epsilon quantile (ignored when ``epsilon_schedule`` is given).
         min_epsilon : float or ``"auto"``, optional
@@ -127,6 +134,13 @@ class ABCSMCSampler(BaseSampler):
             ``"auto"`` (recommended) floors epsilon at ``chi2_min + 2·(k+2)`` (``k`` = #parameters),
             which reproduces the Gaussian posterior width; a float sets a fixed floor. Ignored when
             ``epsilon_schedule`` is given (default ``None`` = no floor, epsilon → ``chi2_min``).
+            With ``simulate_noise=True`` the distances carry an irreducible noise floor (E[χ²] ≈ 2N at
+            the truth), so epsilon self-regulates and the floor is a harmless extra guard.
+        simulate_noise : bool, default True
+            Add per-point white noise ``N(0, flux_err)`` to each simulation so it matches the
+            generative model of the data — the smooth acceptance kernel this induces is what makes
+            ABC-SMC's posterior **width calibrated** (a noiseless simulator under a hard cut targets a
+            likelihood shell). ``False`` restores the old behaviour.
         perturbation_scale : float, default 0.1
             Retained for backward compatibility; the kernel covariance is now set adaptively from the
             weighted population (Toni 2009), so this value is unused.
@@ -198,7 +212,8 @@ class ABCSMCSampler(BaseSampler):
                     block = np.arange(next_attempt, next_attempt + n_jobs * batch)
                     idx_chunks = [c for c in np.array_split(block, n_jobs) if len(c)]
                     args = [(round_idx, parents_arr, parent_weights, params, kernel_std, prior,
-                             predict, distance, times, bands, obs_flux, obs_err, epsilon, idx, seed)
+                             predict, distance, times, bands, obs_flux, obs_err, epsilon, idx, seed,
+                             simulate_noise)
                             for idx in idx_chunks]
                     results = [_smc_batch(args[0])] if pool is None else list(pool.map(_smc_batch, args))
                     for acc, _ in results:
@@ -267,21 +282,25 @@ class ABCSMCSampler(BaseSampler):
                      if population else np.array([np.inf]))
         chi2_min = float(distances.min())
         k, n = len(params), lc.n_points
-        # Best fit = lowest-distance particle; metrics from the exact Gaussian log-likelihood there, in
-        # the data's natural space, so AIC/BIC are COMPARABLE ACROSS SAMPLERS (chi2 alone drops the
-        # Gaussian normalisation and is flux-only).
+        # Best fit by the exact Gaussian log-likelihood over the final population, in the data's natural
+        # space, so AIC/BIC are COMPARABLE ACROSS SAMPLERS. (With simulate_noise the noisy-distance
+        # argmin is the luckiest simulation-noise draw, not the best theta — never select by it.)
         best, max_log_likelihood = {}, float("nan")
         if population:
-            best = {p: float(population[int(np.argmin(distances))][p]) for p in params}
             lik = make_likelihood(lc)
-            max_log_likelihood = float(
-                lik.log_likelihood(np.asarray(predict(best, times, bands), dtype=float)))
+            logls = np.array([lik.log_likelihood(np.asarray(
+                predict({p: float(pt[p]) for p in params}, times, bands), dtype=float))
+                for pt in population[:2000]], dtype=float)
+            bi = int(np.nanargmax(logls)) if np.any(np.isfinite(logls)) else 0
+            best = {p: float(population[bi][p]) for p in params}
+            max_log_likelihood = float(logls[bi])
         info = {
             "n_particles": int(n_particles), "n_rounds": int(n_rounds),
             "rounds": round_info, "total_simulations": int(total_attempts),
             "weighted": True, "kernel": "diagonal_gaussian_2x_weighted_var",
             "quantile": None if epsilon_schedule is not None else float(quantile),
             "min_epsilon": ("auto" if auto_floor else eps_floor),
+            "simulate_noise": bool(simulate_noise),
             "n_jobs": int(n_jobs), "distance": getattr(distance, "__name__", str(distance)),
             "likelihood_space": make_likelihood(lc).space if population else None,
         }
