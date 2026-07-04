@@ -1,0 +1,229 @@
+"""Rendering for the Villar+17 AT2017GFO analysis (see scripts/at2017gfo_villar.py).
+
+Reads the cached ``villar_*.json`` / ``.npz`` results and produces: per-parameter posterior
+histograms annotated with median ± CI, an all-method corner, per-method posterior-predictive light
+curves (magnitude space, 3 bands), a parameter/runtime summary figure, and
+``docs/REPORT_at2017gfo_villar.md``.
+"""
+from __future__ import annotations
+
+import glob
+import json
+import os
+
+import numpy as np
+import matplotlib
+
+matplotlib.use("Agg")
+matplotlib.rcParams.update({"font.size": 11, "axes.labelsize": 12, "axes.titlesize": 12,
+                            "figure.titlesize": 15, "text.usetex": False})
+import matplotlib.pyplot as plt
+
+import whisper_labia as wp
+
+BAND_COL = {"g": "#2ca02c", "r": "#d62728", "i": "#8c564b"}
+COLORS = dict(zip(["mcmc", "abc", "abc_smc", "npe_mdn", "npe_nsf", "snpe5_nsf", "snpe5_tcn"],
+                  ["#08306b", "#a50026", "#006d2c", "#c51b7d", "#01665e", "#4d004b", "#00441b"]))
+LOGPAR = {"mej_1", "mej_2", "temperature_floor_1", "temperature_floor_2", "sigma"}
+VILLAR17 = {  # Villar et al. 2017 (ApJL 851, L21) 2-component model, for reference lines
+    "mej_1": 0.020, "vej_1": 0.266, "mej_2": 0.047, "vej_2": 0.152, "kappa_2": 3.65}
+
+
+def _load(out):
+    res, npz = {}, {}
+    for f in sorted(glob.glob(os.path.join(out, "villar_*.json"))):
+        d = json.load(open(f))
+        res[d["method"]] = d
+        p = f[:-5] + ".npz"
+        if os.path.exists(p):
+            npz[d["method"]] = np.load(p, allow_pickle=True)
+    return res, npz
+
+
+def _fmt(v, lo, hi):
+    """median +err/-err with sensible sig figs."""
+    err = max(hi - v, v - lo)
+    dec = max(0, 2 - int(np.floor(np.log10(err))) if err > 0 else 3)
+    return f"{v:.{dec}f}^{{+{hi - v:.{dec}f}}}_{{-{v - lo:.{dec}f}}}"
+
+
+def plot(out, samplers, params, labels, bands):
+    res, npz = _load(out)
+    if not res:
+        raise SystemExit("no villar results found; run `at2017gfo_villar.py fit ...` first")
+    ms = [m for m in samplers if m in res]
+    allp = params + ["sigma"]
+
+    # ---------------- histograms: rows = parameters, columns = methods, annotated median ± CI ----
+    fig, ax = plt.subplots(len(allp), len(ms), figsize=(2.9 * len(ms), 2.0 * len(allp)),
+                           squeeze=False)
+    for j, m in enumerate(ms):
+        d = npz[m]
+        cols = {p: d["samples"][:, i] for i, p in enumerate(list(d["params"]))}
+        for i, p in enumerate(allp):
+            a = ax[i][j]
+            if p not in cols:
+                a.text(0.5, 0.5, "—", transform=a.transAxes, ha="center", va="center",
+                       fontsize=16, color="0.6")
+                a.set_xticks([]); a.set_yticks([])
+            else:
+                x = cols[p]
+                a.hist(x, bins=36, density=True, color=COLORS[m], alpha=0.6, histtype="stepfilled")
+                lo, med, hi = np.percentile(x, [16, 50, 84])
+                for v, ls in ((med, "-"), (lo, ":"), (hi, ":")):
+                    a.axvline(v, color="k", lw=1.0, ls=ls)
+                if p in VILLAR17:
+                    a.axvline(VILLAR17[p], color="#d62728", lw=1.4, ls="--", alpha=0.8)
+                a.set_title(rf"${_fmt(med, lo, hi)}$", fontsize=9, pad=2)
+                a.set_yticks([])
+                if p in ("temperature_floor_1", "temperature_floor_2"):
+                    a.set_xscale("log")
+            if i == 0:
+                a.annotate(samplers[m][0], xy=(0.5, 1.35), xycoords="axes fraction",
+                           ha="center", fontsize=11, weight="bold")
+            if j == 0:
+                a.set_ylabel(labels.get(p, p), fontsize=11)
+    fig.suptitle("AT2017GFO — Villar+17 kilonova posteriors (median ± 68% CI; red dashed = "
+                 "Villar+17 values)", y=1.005, weight="bold")
+    fig.tight_layout()
+    fig.savefig(os.path.join(out, "villar_hist.png"), dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+    # ---------------- corner (log10 masses; all methods overlaid) ---------------------------------
+    import pandas as pd
+    posts, labs, cols_used = [], [], []
+    show = [p for p in allp]
+    for m in ms:
+        d = npz[m]
+        names = list(d["params"])
+        df = pd.DataFrame(d["samples"], columns=names)
+        for p in ("mej_1", "mej_2"):
+            if p in df:
+                df[p] = np.log10(df[p])
+        keep = [p for p in show if p in df.columns]
+        posts.append(df[keep])
+        labs.append(samplers[m][0]); cols_used.append(COLORS[m])
+    common = [p for p in show if all(p in df.columns for df in posts)]
+    wp.plot_corner([df[common] for df in posts], labels=labs, colors=cols_used,
+                   parameters=common,
+                   title="AT2017GFO — all-sampler posterior (log10 ejecta masses)",
+                   save=os.path.join(out, "villar_corner.png"))
+    plt.close("all")
+
+    # ---------------- PPC: one panel per method, 3-band model bands + data -----------------------
+    fig, ax = plt.subplots(len(ms), 1, figsize=(8.6, 2.4 * len(ms)), squeeze=False, sharex=True)
+    ref = npz[ms[0]]
+    t, band = ref["time"], ref["band"].astype(str)
+    mag, err = ref["mag"], ref["mag_err"]
+    for i, m in enumerate(ms):
+        a = ax[i][0]; d = npz[m]
+        for b in bands:
+            lo, med, hi = d[f"curve_{b}"]
+            a.fill_between(d["tgrid"], lo, hi, color=BAND_COL[b], alpha=0.25)
+            a.plot(d["tgrid"], med, color=BAND_COL[b], lw=1.4)
+            sel = band == b
+            a.errorbar(t[sel], mag[sel], yerr=err[sel], fmt="o", ms=2.6, color=BAND_COL[b],
+                       alpha=0.75, lw=0.7)
+        j = res[m]["ppc"]
+        a.invert_yaxis()
+        a.set_ylabel(samplers[m][0], fontsize=10)
+        a.text(0.99, 0.05, f"χ²/dof={j['chi2_reported']:.1f}  (+σ: {j['chi2_scatter']:.2f})  "
+               f"cov95={j['cov95']:.2f}", transform=a.transAxes, ha="right", va="bottom", fontsize=9)
+    ax[-1][0].set_xlabel("days since merger (MJD 57982)")
+    fig.suptitle("AT2017GFO posterior-predictive light curves — g/r/i (95% model band + data)",
+                 y=1.0, weight="bold")
+    fig.tight_layout()
+    fig.savefig(os.path.join(out, "villar_ppc.png"), dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+    # ---------------- summary: medians vs methods + runtime ---------------------------------------
+    fig = plt.figure(figsize=(13.5, 4.4))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.6, 0.8], wspace=0.28)
+    ax0 = fig.add_subplot(gs[0])
+    show6 = ["mej_1", "vej_1", "mej_2", "vej_2", "kappa_2", "sigma"]
+    xs = np.arange(len(show6))
+    for k, m in enumerate(ms):
+        d = res[m]["summary"]
+        med = [d[p]["median"] if p in d else np.nan for p in show6]
+        lo = [d[p]["median"] - d[p]["ci16"] if p in d else 0 for p in show6]
+        hi = [d[p]["ci84"] - d[p]["median"] if p in d else 0 for p in show6]
+        norm = [VILLAR17.get(p, np.nan) for p in show6]
+        val = [m0 / n if np.isfinite(n) else m0 for m0, n in zip(med, norm)]
+        e_lo = [l / n if np.isfinite(n) else l for l, n in zip(lo, norm)]
+        e_hi = [h / n if np.isfinite(n) else h for h, n in zip(hi, norm)]
+        ax0.errorbar(xs + 0.09 * (k - len(ms) / 2), val, yerr=[e_lo, e_hi], fmt="o", ms=4,
+                     color=COLORS[m], label=samplers[m][0], lw=1.2)
+    ax0.axhline(1.0, color="0.4", ls="--", lw=1)
+    ax0.set_xticks(xs)
+    ax0.set_xticklabels([labels.get(p, p) + ("\n(/V17)" if p in VILLAR17 else "") for p in show6])
+    ax0.set_ylabel("median (÷ Villar+17 where available)")
+    ax0.set_title("Parameter medians ± 68% CI across methods")
+    ax0.legend(fontsize=7.5, frameon=False, ncol=2)
+
+    ax1 = fig.add_subplot(gs[1])
+    rt = [res[m]["wall_s"] for m in ms]
+    ax1.barh([samplers[m][0] for m in ms], rt, color=[COLORS[m] for m in ms])
+    ax1.set_xlabel("wall [s]"); ax1.set_xscale("log"); ax1.set_title("End-to-end fit time")
+    for y, v in enumerate(rt):
+        ax1.text(v, y, f" {v:.0f}s", va="center", fontsize=8)
+    fig.suptitle("AT2017GFO Villar+17 kilonova — summary", y=1.04, weight="bold")
+    fig.savefig(os.path.join(out, "villar_summary.png"), dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+    _report(out, res, samplers, params, labels, ms)
+    print("saved figures + REPORT ->", out)
+
+
+def _report(out, res, samplers, params, labels, ms):
+    allp = params + ["sigma"]
+    lines = ["# AT2017GFO — Villar+2017-style two-component kilonova with WHISPER", "",
+             "Real-data application: the redback `two_component_kilonova` model with "
+             "**κ_blue = 0.5 cm²/g fixed**, redshift fixed (z = 0.00984), **κ_red and both "
+             "temperature floors free**, fit to the AT2017GFO g/r/i photometry (SNR ≥ 3) in "
+             "apparent-magnitude space. The likelihood-based and neural methods also fit the "
+             "**Villar+17 extra-scatter term σ** (added in quadrature to the reported errors):", "",
+             "$$\\ln\\mathcal{L} = -\\tfrac{1}{2}\\sum_i\\left[\\frac{(O_i-M_i)^2}"
+             "{\\sigma_i^2+\\sigma^2} + \\ln\\big(2\\pi(\\sigma_i^2+\\sigma^2)\\big)\\right]$$", "",
+             "*(the correctly normalized form of Villar et al. 2017, Eq. 4, as implemented in "
+             "MOSFiT). The distance-based ABC family fits the 7 physical parameters only: a χ² "
+             "rejection distance is monotonically penalised by extra simulation noise, so a "
+             "noise-level parameter is not identifiable by distance-based ABC — verified on "
+             "synthetic data.*", "",
+             "## Posterior medians ± 68% CI", ""]
+    hdr = "| parameter | " + " | ".join(samplers[m][0] for m in ms) + " |"
+    lines += [hdr, "|" + "---|" * (len(ms) + 1)]
+    for p in allp:
+        row = [labels.get(p, p).replace("$", "")]
+        for m in ms:
+            s = res[m]["summary"].get(p)
+            row.append("—" if s is None else
+                       f"{s['median']:.4g} [+{s['ci84'] - s['median']:.2g} "
+                       f"−{s['median'] - s['ci16']:.2g}]")
+        lines.append("| " + " | ".join(row) + " |")
+    lines += ["", "*Villar+2017 (ApJL 851 L21) report ≈ M_ej^blue = 0.020 M☉, v^blue = 0.266c, "
+              "M_ej^red = 0.047 M☉, v^red = 0.152c, κ_red = 3.65 cm²/g for their 2-component fit "
+              "(different band set and data reduction — an approximate reference, not ground "
+              "truth).*", "",
+              "## Goodness-of-fit & cost", "",
+              "| method | χ²/dof (reported σᵢ) | χ²/dof (σᵢ ⊕ σ) | PPC cov95 | wall [s] "
+              "| per-object [s] | AIC |",
+              "|---|---|---|---|---|---|---|"]
+    for m in ms:
+        d = res[m]; pp = d["ppc"]
+        amort = d.get("amortized_s")
+        per = (f"{amort:.2f}" if amort is not None and d.get("info", {}).get("num_rounds") == 1
+               else f"{d['wall_s']:.0f}")
+        lines.append(f"| {samplers[m][0]} | {pp['chi2_reported']:.1f} | {pp['chi2_scatter']:.2f} | "
+                     f"{pp['cov95']:.2f} | {d['wall_s']:.0f} | {per} | {d['aic']:.0f} |")
+    lines += ["", "*χ²/dof against the reported errors is ≫1 for every method — high-SNR kilonova "
+              "photometry always carries model systematics beyond the measurement errors; that is "
+              "exactly what σ absorbs: with the fitted scatter the χ²/dof (σᵢ ⊕ σ) is ≈1 and the "
+              "predictive coverage is nominal. AIC values are comparable only among methods fitting "
+              "the same parameter set (the ABC family omits σ).*", "",
+              "![histograms](figures/at2017gfo_villar/villar_hist.png)", "",
+              "![corner](figures/at2017gfo_villar/villar_corner.png)", "",
+              "![ppc](figures/at2017gfo_villar/villar_ppc.png)", "",
+              "![summary](figures/at2017gfo_villar/villar_summary.png)", ""]
+    path = os.path.join(os.path.dirname(out.rstrip("/")), "..", "REPORT_at2017gfo_villar.md")
+    path = os.path.abspath(path)
+    open(path, "w").write("\n".join(lines))

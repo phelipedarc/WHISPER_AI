@@ -57,8 +57,8 @@ def _smc_batch(args):
     worker) makes the proposals — and hence the population — independent of ``n_jobs``.
     """
     (round_idx, parents_arr, parent_weights, param_names, kernel_std, prior,
-     predict, distance, times, bands, obs_flux, obs_err, epsilon, indices, seed,
-     simulate_noise) = args
+     predict, distance, times, bands, obs_y, obs_err, epsilon, indices, seed,
+     simulate_noise, model_in_space, scatter_name) = args
     accepted = []
     for a in indices:
         rng = np.random.default_rng([int(seed), int(round_idx), int(a)])
@@ -70,10 +70,12 @@ def _smc_batch(args):
             theta = {nm: float(v) for nm, v in zip(param_names, vec)}
             if not np.isfinite(prior.log_prob(theta)):                   # outside prior support -> reject
                 continue
-        sim = np.asarray(predict(theta, times, bands), dtype=float)
+        sim = np.asarray(model_in_space(predict(theta, times, bands)), dtype=float)
         if simulate_noise:                       # generative match: same per-point noise as the data
-            sim = sim + rng.normal(0.0, obs_err)
-        d = distance(obs_flux, obs_err, sim, bands)
+            err = obs_err if scatter_name is None else np.sqrt(
+                obs_err ** 2 + float(theta[scatter_name]) ** 2)   # + fitted extra scatter (Villar+17)
+            sim = sim + rng.normal(0.0, err)
+        d = distance(obs_y, obs_err, sim, bands)
         if d < epsilon:
             rec = dict(theta)
             rec["distance"] = d
@@ -101,8 +103,9 @@ class ABCSMCSampler(BaseSampler):
     name = "abc_smc"
 
     def fit(self, lc, model, prior=None, *, n_particles=500, n_rounds=5, epsilon_schedule=None,
-            quantile=0.5, min_epsilon=None, simulate_noise=True, perturbation_scale=0.1,
-            distance=chi2_distance, n_jobs=None, seed=0, max_attempts_per_round=None):
+            quantile=0.5, min_epsilon=None, simulate_noise=True, space="auto", scatter_param=None,
+            perturbation_scale=0.1, distance=chi2_distance, n_jobs=None, seed=0,
+            max_attempts_per_round=None):
         """Fit ``lc`` with ``model`` via importance-weighted ABC-SMC, returning a :class:`SamplerResult`.
 
         Parameters
@@ -141,6 +144,14 @@ class ABCSMCSampler(BaseSampler):
             generative model of the data — the smooth acceptance kernel this induces is what makes
             ABC-SMC's posterior **width calibrated** (a noiseless simulator under a hard cut targets a
             likelihood shell). ``False`` restores the old behaviour.
+        space : {'auto', 'flux', 'magnitude'}, default 'auto'
+            Comparison space: data, simulations, noise and distance all live here (``'auto'`` follows
+            the data's ``data_mode``, like the likelihood-based samplers).
+        scatter_param : str, optional
+            Prior parameter treated as a free **extra-scatter** term (Villar+2017): each simulation's
+            noise becomes ``N(0, sqrt(err² + scatter²))`` with that particle's value, matching
+            :class:`~whisper_labia.likelihood.GaussianLikelihoodWithScatter`. It is perturbed and
+            weighted like every other particle dimension. Requires ``simulate_noise=True``.
         perturbation_scale : float, default 0.1
             Retained for backward compatibility; the kernel covariance is now set adaptively from the
             weighted population (Toni 2009), so this value is unused.
@@ -167,15 +178,21 @@ class ABCSMCSampler(BaseSampler):
         prior = prior if prior is not None else model.default_prior
         if prior is None:
             raise ValueError(f"No prior available for model {model.name!r}; pass prior=...")
-        lc = lc.add_flux()
-        if lc.flux_err is None:
-            raise ValueError("ABC chi-square distance needs flux errors (flux_err).")
+        # Comparison space: data, simulations, noise and distance all live here (see ABCSampler).
+        from ..likelihood import GaussianLikelihood
+        lik_space = GaussianLikelihood(lc, space=space)
         times = np.asarray(lc.time, dtype=float)
         bands = np.asarray(lc.band)
-        obs_flux = np.asarray(lc.flux, dtype=float)
-        obs_err = np.asarray(lc.flux_err, dtype=float)
+        obs_y = np.asarray(lik_space.y, dtype=float)
+        obs_err = np.asarray(lik_space.sigma, dtype=float)
         predict = model.predict
-        params = list(model.parameters)
+        params = list(prior.names)              # particle dimensions (may include a scatter nuisance)
+        if scatter_param is not None:
+            if scatter_param not in params:
+                raise ValueError(f"scatter_param {scatter_param!r} is not in the prior ({params}).")
+            if not simulate_noise:
+                raise ValueError("scatter_param requires simulate_noise=True (the scatter enters "
+                                 "the generative noise).")
 
         # Epsilon floor. A hard chi-square cutoff at epsilon = chi2_min + c accepts the ellipsoid
         # {Δθ : Δθ'·Hess(chi2)·Δθ < c}; matching its marginal width to the Gaussian posterior needs
@@ -212,8 +229,8 @@ class ABCSMCSampler(BaseSampler):
                     block = np.arange(next_attempt, next_attempt + n_jobs * batch)
                     idx_chunks = [c for c in np.array_split(block, n_jobs) if len(c)]
                     args = [(round_idx, parents_arr, parent_weights, params, kernel_std, prior,
-                             predict, distance, times, bands, obs_flux, obs_err, epsilon, idx, seed,
-                             simulate_noise)
+                             predict, distance, times, bands, obs_y, obs_err, epsilon, idx, seed,
+                             simulate_noise, lik_space.model_in_space, scatter_param)
                             for idx in idx_chunks]
                     results = [_smc_batch(args[0])] if pool is None else list(pool.map(_smc_batch, args))
                     for acc, _ in results:
@@ -282,15 +299,23 @@ class ABCSMCSampler(BaseSampler):
                      if population else np.array([np.inf]))
         chi2_min = float(distances.min())
         k, n = len(params), lc.n_points
-        # Best fit by the exact Gaussian log-likelihood over the final population, in the data's natural
-        # space, so AIC/BIC are COMPARABLE ACROSS SAMPLERS. (With simulate_noise the noisy-distance
-        # argmin is the luckiest simulation-noise draw, not the best theta — never select by it.)
+        # Best fit by the exact Gaussian log-likelihood over the final population — scatter-augmented
+        # (with each particle's own scatter value) when a scatter parameter is fitted — so AIC/BIC are
+        # COMPARABLE ACROSS SAMPLERS. (With simulate_noise the noisy-distance argmin is the luckiest
+        # simulation-noise draw, not the best theta — never select by it.)
         best, max_log_likelihood = {}, float("nan")
         if population:
-            lik = make_likelihood(lc)
-            logls = np.array([lik.log_likelihood(np.asarray(
-                predict({p: float(pt[p]) for p in params}, times, bands), dtype=float))
-                for pt in population[:2000]], dtype=float)
+            lik = (make_likelihood(lc, kind="gaussian_scatter", space=space,
+                                   scatter_param=scatter_param) if scatter_param
+                   else make_likelihood(lc, space=space))
+
+            def _logl(pt):
+                mf = np.asarray(predict({p: float(pt[p]) for p in params}, times, bands), dtype=float)
+                if scatter_param:
+                    return lik.log_likelihood(mf, sigma_extra=float(pt[scatter_param]))
+                return lik.log_likelihood(mf)
+
+            logls = np.array([_logl(pt) for pt in population[:2000]], dtype=float)
             bi = int(np.nanargmax(logls)) if np.any(np.isfinite(logls)) else 0
             best = {p: float(population[bi][p]) for p in params}
             max_log_likelihood = float(logls[bi])
@@ -301,8 +326,10 @@ class ABCSMCSampler(BaseSampler):
             "quantile": None if epsilon_schedule is not None else float(quantile),
             "min_epsilon": ("auto" if auto_floor else eps_floor),
             "simulate_noise": bool(simulate_noise),
+            "space": lik_space.space,
+            "scatter_param": scatter_param,
             "n_jobs": int(n_jobs), "distance": getattr(distance, "__name__", str(distance)),
-            "likelihood_space": make_likelihood(lc).space if population else None,
+            "likelihood_space": lik_space.space,
         }
         return SamplerResult(
             sampler="abc_smc", model=model.name, parameters=params,

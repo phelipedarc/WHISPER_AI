@@ -36,6 +36,7 @@ from .priors import LogUniform, Prior, Uniform
 from .distance import chi2_distance, get_distance, list_distances, register_distance
 from .likelihood import (
     GaussianLikelihood,
+    GaussianLikelihoodWithScatter,
     GaussianLikelihoodWithUpperLimits,
     MixtureGaussianLikelihood,
     list_likelihoods,
@@ -67,8 +68,8 @@ __all__ = [
     # distances (registry)
     "chi2_distance", "register_distance", "get_distance", "list_distances",
     # likelihoods (registry)
-    "GaussianLikelihood", "GaussianLikelihoodWithUpperLimits", "MixtureGaussianLikelihood",
-    "make_likelihood", "register_likelihood", "list_likelihoods",
+    "GaussianLikelihood", "GaussianLikelihoodWithScatter", "GaussianLikelihoodWithUpperLimits",
+    "MixtureGaussianLikelihood", "make_likelihood", "register_likelihood", "list_likelihoods",
     # samplers (registry)
     "fit_ABC", "fit_ABC_SMC", "fit_MCMC", "fit_SNPE", "fit", "SamplerResult", "register_sampler",
     "list_samplers",

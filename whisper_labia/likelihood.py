@@ -163,8 +163,47 @@ class MixtureGaussianLikelihood(GaussianLikelihood):
                 "n_data": int(self.y.size), "alpha": self.alpha}
 
 
+class GaussianLikelihoodWithScatter(GaussianLikelihood):
+    """Gaussian likelihood with a FREE additional scatter term added in quadrature (Villar+2017).
+
+    .. math::
+
+        \\ln\\mathcal{L} = -\\tfrac12 \\sum_i \\left[ \\frac{(O_i - M_i)^2}{\\sigma_i^2 + \\sigma^2}
+                          + \\ln\\!\\big(2\\pi(\\sigma_i^2 + \\sigma^2)\\big) \\right]
+
+    where :math:`\\sigma` is a fitted parameter absorbing extra model/data uncertainty beyond the
+    reported per-point errors :math:`\\sigma_i` (Villar et al. 2017, ApJL 851 L21; as implemented in
+    MOSFiT — the correctly normalized form of their Eq. 4). With :math:`\\sigma = 0` this reduces
+    exactly to :class:`GaussianLikelihood`.
+
+    ``scatter_param`` names the prior parameter that carries :math:`\\sigma` (default ``"sigma"``);
+    samplers route that parameter here (``sigma_extra``) instead of into ``model.predict``, and the
+    simulation-based samplers add it to their generative noise, so every method fits the same model.
+    """
+
+    def __init__(self, lc, space="auto", scatter_param="sigma", zeropoint_jy=AB_ZEROPOINT_JY):
+        super().__init__(lc, space=space, zeropoint_jy=zeropoint_jy)
+        self.scatter_param = str(scatter_param)
+
+    def log_likelihood(self, model_flux, sigma_extra=0.0):
+        var = self.sigma ** 2 + float(sigma_extra) ** 2
+        res2 = (self.y - self.model_in_space(model_flux)) ** 2 / var
+        return float(-0.5 * np.sum(res2 + _LN2PI + np.log(var)))
+
+    def log_likelihood_pointwise(self, model_flux, sigma_extra=0.0):
+        var = self.sigma ** 2 + float(sigma_extra) ** 2
+        res2 = (self.y - self.model_in_space(model_flux)) ** 2 / var
+        return -0.5 * (res2 + _LN2PI + np.log(var))
+
+    def summary(self):
+        return {"likelihood": "gaussian_scatter", "space": self.space,
+                "n_data": int(self.y.size), "scatter_param": self.scatter_param}
+
+
 _LIKELIHOODS = {
     "gaussian": GaussianLikelihood, "normal": GaussianLikelihood,
+    "gaussian_scatter": GaussianLikelihoodWithScatter, "scatter": GaussianLikelihoodWithScatter,
+    "villar": GaussianLikelihoodWithScatter,
     "gaussian_upper_limits": GaussianLikelihoodWithUpperLimits,
     "upper_limits": GaussianLikelihoodWithUpperLimits, "ul": GaussianLikelihoodWithUpperLimits,
     "mixture": MixtureGaussianLikelihood, "mixture_gaussian": MixtureGaussianLikelihood,

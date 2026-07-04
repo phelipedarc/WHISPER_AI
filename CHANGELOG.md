@@ -5,6 +5,30 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Villar+2017 AT2017GFO application: free-scatter likelihood, ABC comparison space, parallel MCMC
+- **`GaussianLikelihoodWithScatter`** (`kind="gaussian_scatter"`/`"villar"`): Gaussian likelihood with
+  a **free extra-scatter term σ added in quadrature** to the reported errors — Villar et al. 2017
+  (ApJL 851 L21) Eq. 4 in its correctly normalized form, `lnL = −½Σ[(O−M)²/(σᵢ²+σ²) +
+  ln(2π(σᵢ²+σ²))]`. σ is a *likelihood* parameter sampled with the rest: MCMC routes a prior
+  parameter named `sigma` via `likelihood="gaussian_scatter"`; ABC/ABC-SMC/SNPE take
+  `scatter_param="sigma"` and fold it into their **generative simulation noise**
+  (`N(0, √(σᵢ²+σ²))` per draw). Verified on synthetic data with mis-reported errors: MCMC and the
+  exact likelihood recover the injected scatter; neural SBI constrains it weakly (a noise level is a
+  distributional feature of one realization); and a plain χ² rejection distance **cannot** identify
+  it (monotonically penalised by extra noise — its ABC posterior collapses to zero), so the ABC
+  family fits the physical parameters only, documented in the report.
+- **ABC/ABC-SMC `space="auto"|"flux"|"magnitude"`**: the comparison space now routes the acceptance
+  itself — data, simulations, noise and distance all live in the chosen space (previously flux-only).
+  Sampled parameters are now `prior.names` (a prior may carry non-model parameters).
+- **MCMC `n_jobs`**: emcee walker likelihoods in a process pool — makes an 8-D fit with the ~0.1 s
+  redback kilonova likelihood run in minutes.
+- **`scripts/at2017gfo_villar.py` + `_plots.py`**: the real-world application — the
+  `two_component_kilonova` with **κ_blue = 0.5 fixed**, z fixed, κ_red + both temperature floors
+  free + σ, fit in magnitude space by 7 methods (MCMC, ABC, ABC-SMC, NPE-MDN, NPE-NSF, SNPE-5r-NSF,
+  SNPE-5r-NSF+TCN), rendered to `docs/REPORT_at2017gfo_villar.md` with annotated posterior
+  histograms, an all-method corner, magnitude-space posterior-predictive light curves and a
+  parameter/runtime summary.
+
 ### Calibrated likelihood-free inference + neural-SBI performance upgrade
 - **Noise-matched ABC/ABC-SMC (`simulate_noise=True`, new default).** Every simulation now adds
   per-point white noise from the reported errors (`N(0, flux_err)`), matching the generative model of

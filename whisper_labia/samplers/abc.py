@@ -22,31 +22,33 @@ from ..models import get_model
 from .base import BaseSampler, SamplerResult, summarize_posterior
 
 
-def _simulate_batch(predict, prior, distance, times, bands, obs_flux, obs_err, indices, seed,
-                    simulate_noise):
+def _simulate_batch(predict, prior, distance, times, bands, obs_y, obs_err, indices, seed,
+                    simulate_noise, model_in_space, scatter_name):
     """Simulate the given **global** simulation indices.
 
     Each index ``i`` draws from its own RNG stream ``default_rng([seed, i])``, so the set of draws is
     identical no matter how the indices are chunked across workers. This makes the result fully
     reproducible for a fixed ``seed`` **regardless of ``n_jobs``** (the machine's core count).
 
-    With ``simulate_noise`` the simulation matches the generative model of the data — per-point white
-    noise ``N(0, obs_err)`` is added to the model prediction (drawn from the same per-index stream, so
-    reproducibility is preserved). Comparing *noisy* simulations to the noisy data is what makes ABC
-    exact in the small-epsilon limit; a noiseless simulator under a hard distance cut targets a
-    likelihood *shell* instead, which mis-shapes the posterior width.
+    ``model_in_space`` maps the model's flux prediction into the comparison space (identity for flux,
+    flux→AB magnitude for magnitude space), so data, simulation, noise and distance all live in ONE
+    space. With ``simulate_noise`` the simulation matches the generative model of the data — per-point
+    white noise ``N(0, obs_err)`` (plus, when ``scatter_name`` is set, that prior parameter's extra
+    scatter in quadrature, Villar+2017-style) is added to the prediction from this simulation's own
+    stream, preserving reproducibility. Comparing *noisy* simulations to the noisy data is what makes
+    ABC exact in the small-epsilon limit.
     """
     thetas = []
     distances = np.empty(len(indices), dtype=float)
     for j, idx in enumerate(indices):
         rng = np.random.default_rng([int(seed), int(idx)])
         theta = prior.sample(rng)
-        sim = np.asarray(predict(theta, times, bands), dtype=float)
+        sim = np.asarray(model_in_space(predict(theta, times, bands)), dtype=float)
         if simulate_noise:
-            # Per-point noise from the REPORTED errors, drawn from this simulation's own stream —
-            # the simulated data then follows the same generative model as the observation.
-            sim = sim + rng.normal(0.0, obs_err)
-        distances[j] = distance(obs_flux, obs_err, sim, bands)
+            err = obs_err if scatter_name is None else np.sqrt(
+                obs_err ** 2 + float(theta[scatter_name]) ** 2)
+            sim = sim + rng.normal(0.0, err)
+        distances[j] = distance(obs_y, obs_err, sim, bands)
         thetas.append(theta)
     return thetas, distances
 
@@ -61,7 +63,8 @@ class ABCSampler(BaseSampler):
     name = "abc"
 
     def fit(self, lc, model, prior=None, *, n_simulations=10000, quantile=0.01, threshold=None,
-            distance=chi2_distance, simulate_noise=True, n_jobs=None, seed=0):
+            distance=chi2_distance, simulate_noise=True, space="auto", scatter_param=None,
+            n_jobs=None, seed=0):
         """Fit ``lc`` with ``model`` by rejection ABC, returning a :class:`SamplerResult`.
 
         Parameters
@@ -89,6 +92,16 @@ class ABCSampler(BaseSampler):
             generative model of the data (measurement noise included). This is what makes ABC exact
             as epsilon → 0 and keeps the posterior width **calibrated**; ``False`` restores the old
             noiseless-simulator behaviour (a hard cut on a likelihood shell, mis-shaped width).
+        space : {'auto', 'flux', 'magnitude'}, default 'auto'
+            Comparison space: data, simulations, noise and distance all live here (``'auto'`` follows
+            the data's ``data_mode``, like the likelihood-based samplers).
+        scatter_param : str, optional
+            Name of a prior parameter to treat as a free **extra-scatter** term (Villar+2017): each
+            simulation's noise becomes ``N(0, sqrt(err² + scatter²))`` with that draw's value, so ABC
+            fits the same scatter-augmented generative model as
+            :class:`~whisper_labia.likelihood.GaussianLikelihoodWithScatter`. Requires
+            ``simulate_noise=True``; the parameter is ignored by ``model.predict`` (models read only
+            the keys they know) and appears in the posterior like any other.
         n_jobs : int, optional
             Worker processes (default ``min(os.cpu_count(), 8)``). **The result is independent of
             ``n_jobs``** for a fixed ``seed`` — parallelism affects speed only, not the science.
@@ -107,14 +120,22 @@ class ABCSampler(BaseSampler):
         if prior is None:
             raise ValueError(f"No prior available for model {model.name!r}; pass prior=...")
 
-        lc = lc.add_flux()
-        if lc.flux_err is None:
-            raise ValueError("ABC chi-square distance needs flux errors (flux_err).")
+        # The comparison space: data, simulations, noise and distance all live here. The Gaussian
+        # likelihood object supplies the space-resolved observation (y, err) and the flux->space map.
+        from ..likelihood import GaussianLikelihood
+        lik_space = GaussianLikelihood(lc, space=space)
         times = np.asarray(lc.time, dtype=float)
         bands = np.asarray(lc.band)
-        obs_flux = np.asarray(lc.flux, dtype=float)
-        obs_err = np.asarray(lc.flux_err, dtype=float)
+        obs_y = np.asarray(lik_space.y, dtype=float)
+        obs_err = np.asarray(lik_space.sigma, dtype=float)
         predict = model.predict
+        names = list(prior.names)               # sampled parameters (may include a scatter nuisance)
+        if scatter_param is not None:
+            if scatter_param not in names:
+                raise ValueError(f"scatter_param {scatter_param!r} is not in the prior ({names}).")
+            if not simulate_noise:
+                raise ValueError("scatter_param requires simulate_noise=True (the scatter enters "
+                                 "the generative noise).")
 
         n_jobs = n_jobs or min(os.cpu_count() or 1, 8)
         n_jobs = max(1, min(int(n_jobs), n_simulations))
@@ -127,12 +148,14 @@ class ABCSampler(BaseSampler):
         dist_parts = []
         if n_jobs == 1:
             th, ds = _simulate_batch(predict, prior, distance, times, bands,
-                                     obs_flux, obs_err, index_chunks[0], seed, simulate_noise)
+                                     obs_y, obs_err, index_chunks[0], seed, simulate_noise,
+                                     lik_space.model_in_space, scatter_param)
             thetas.extend(th)
             dist_parts.append(ds)
         else:
-            args = [(predict, prior, distance, times, bands, obs_flux, obs_err, idx, seed,
-                     simulate_noise) for idx in index_chunks]
+            args = [(predict, prior, distance, times, bands, obs_y, obs_err, idx, seed,
+                     simulate_noise, lik_space.model_in_space, scatter_param)
+                    for idx in index_chunks]
             with ProcessPoolExecutor(max_workers=n_jobs) as executor:
                 for th, ds in executor.map(_worker, args):
                     thetas.extend(th)
@@ -147,24 +170,33 @@ class ABCSampler(BaseSampler):
                 f"ABC accepted 0 of {n_simulations} draws at epsilon={epsilon:g}; the posterior is "
                 "empty. best_params / AIC / BIC reflect the single closest draw only.", stacklevel=2)
         accepted = [thetas[i] for i in np.nonzero(keep)[0]]
-        samples = pd.DataFrame(accepted, columns=model.parameters)
+        samples = pd.DataFrame(accepted, columns=names)     # ALL sampled params (incl. any scatter)
         samples["distance"] = distances[keep]
 
-        # Model-selection metrics. The chi-square distance drops the Gaussian normalisation and is
-        # always in flux space; to make AIC/BIC **comparable across samplers** (MCMC/SNPE use the exact
-        # Gaussian log-likelihood in the data's natural space), evaluate that same likelihood here too.
-        # With simulate_noise the noisy-distance argmin is the *luckiest simulation-noise draw*, not the
-        # best theta — so the best fit is chosen by the exact log-likelihood over the accepted draws
+        # Model-selection metrics. The chi-square distance drops the Gaussian normalisation; to make
+        # AIC/BIC **comparable across samplers** (MCMC/SNPE use the exact Gaussian log-likelihood in
+        # the data's natural space), evaluate that same likelihood here too — the scatter-augmented
+        # one when a scatter parameter is fitted, with each draw's own scatter value. With
+        # simulate_noise the noisy-distance argmin is the *luckiest simulation-noise draw*, not the
+        # best theta — so the best fit is chosen by exact log-likelihood over the accepted draws
         # (deterministically capped scan), never by the noisy distance.
         chi2_min = float(distances.min())     # noisy scale when simulate_noise: E[D] ~ chi2 + n_points
-        k, n = len(model.parameters), lc.n_points
-        lik = make_likelihood(lc)
+        k, n = len(names), lc.n_points
+        lik = (make_likelihood(lc, kind="gaussian_scatter", space=space,
+                               scatter_param=scatter_param) if scatter_param
+               else make_likelihood(lc, space=space))
         cand = accepted if accepted else [thetas[int(np.argmin(distances))]]
         scan = cand[:2000]
-        logls = np.array([lik.log_likelihood(np.asarray(predict(th, times, bands), dtype=float))
-                          for th in scan], dtype=float)
+
+        def _logl(th):
+            mf = np.asarray(predict(th, times, bands), dtype=float)
+            if scatter_param:
+                return lik.log_likelihood(mf, sigma_extra=float(th[scatter_param]))
+            return lik.log_likelihood(mf)
+
+        logls = np.array([_logl(th) for th in scan], dtype=float)
         best_idx = int(np.nanargmax(logls)) if np.any(np.isfinite(logls)) else 0
-        best = {p: float(scan[best_idx][p]) for p in model.parameters}
+        best = {p: float(scan[best_idx][p]) for p in names}
         max_log_likelihood = float(logls[best_idx])
         info = {
             "n_simulations": int(n_simulations),
@@ -173,13 +205,15 @@ class ABCSampler(BaseSampler):
             "epsilon": epsilon,
             "quantile": None if threshold is not None else float(quantile),
             "simulate_noise": bool(simulate_noise),
+            "space": lik_space.space,
+            "scatter_param": scatter_param,
             "n_jobs": int(n_jobs),
             "distance": getattr(distance, "__name__", str(distance)),
             "likelihood_space": lik.space,
         }
         return SamplerResult(
-            sampler="abc", model=model.name, parameters=list(model.parameters),
-            samples=samples, summary=summarize_posterior(samples, model.parameters),
+            sampler="abc", model=model.name, parameters=names,
+            samples=samples, summary=summarize_posterior(samples, names),
             best_params=best, n_data=n, n_params=k, runtime_s=runtime, info=info,
             min_distance=chi2_min, max_log_likelihood=max_log_likelihood,
             aic=float(-2.0 * max_log_likelihood + 2 * k),

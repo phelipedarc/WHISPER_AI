@@ -28,14 +28,22 @@ from ..models import get_model
 from .base import BaseSampler, SamplerResult, summarize_posterior
 
 
-def _log_prob(theta, names, prior, predict, times, bands, likelihood):
-    """log-posterior for one parameter vector ``theta`` (ordered like ``names``)."""
+def _log_prob(theta, names, prior, predict, times, bands, likelihood, scatter_name=None):
+    """log-posterior for one parameter vector ``theta`` (ordered like ``names``).
+
+    ``scatter_name`` routes that prior parameter to the likelihood as its extra-scatter term
+    (:class:`~whisper_labia.likelihood.GaussianLikelihoodWithScatter`) instead of the model —
+    the model's ``predict`` still receives the full params dict (models ignore unknown keys).
+    """
     params = {nm: float(v) for nm, v in zip(names, theta)}
     lp = prior.log_prob(params)
     if not np.isfinite(lp):                       # outside the prior support -> forbidden
         return -np.inf
     model_flux = np.asarray(predict(params, times, bands), dtype=float)
-    ll = likelihood.log_likelihood(model_flux)
+    if scatter_name is not None:
+        ll = likelihood.log_likelihood(model_flux, sigma_extra=params[scatter_name])
+    else:
+        ll = likelihood.log_likelihood(model_flux)
     if not np.isfinite(ll):
         return -np.inf
     return lp + ll
@@ -48,7 +56,7 @@ class MCMCSampler(BaseSampler):
 
     def fit(self, lc, model, prior=None, *, nwalkers=None, nsteps=5000, burnin=1000, thin=10,
             initial_guess=None, initial_scatter=1e-3, space="auto", likelihood="auto",
-            seed=0, progress=False, moves=None) -> SamplerResult:
+            seed=0, progress=False, moves=None, n_jobs=None) -> SamplerResult:
         """Fit ``lc`` with ``model`` via emcee MCMC, returning a :class:`SamplerResult`.
 
         Parameters
@@ -83,6 +91,10 @@ class MCMCSampler(BaseSampler):
             Show the emcee progress bar.
         moves : optional
             An ``emcee`` move (or list of (move, weight)); default is emcee's stretch move.
+        n_jobs : int, optional
+            Worker processes for parallel likelihood evaluation (emcee ``pool``). Worth it only when
+            one likelihood call is expensive (e.g. a ~0.1 s radiative-transfer model); for cheap
+            analytic models the process overhead dominates. Default ``None`` = serial.
 
         Returns
         -------
@@ -120,14 +132,28 @@ class MCMCSampler(BaseSampler):
             p0 = np.array([[prior.distributions[nm].sample(rng) for nm in names]
                            for _ in range(nwalkers)], dtype=float)
 
-        sampler = emcee.EnsembleSampler(
-            nwalkers, ndim, _log_prob, moves=moves,
-            args=(names, prior, predict, times, bands, lik))
-        sampler._random.seed(int(seed))                           # seed emcee's proposal RNG
+        # A prior parameter named after the likelihood's scatter term (GaussianLikelihoodWithScatter)
+        # is a LIKELIHOOD parameter: routed to log_likelihood(sigma_extra=...), sampled like the rest.
+        scatter_name = getattr(lik, "scatter_param", None)
+        scatter_name = scatter_name if (scatter_name and scatter_name in names) else None
 
-        t0 = time.perf_counter()
-        sampler.run_mcmc(p0, int(nsteps), progress=progress)
-        runtime = time.perf_counter() - t0
+        pool = None
+        if n_jobs and int(n_jobs) > 1:
+            import multiprocessing
+            pool = multiprocessing.get_context("fork").Pool(int(n_jobs))
+        try:
+            sampler = emcee.EnsembleSampler(
+                nwalkers, ndim, _log_prob, moves=moves, pool=pool,
+                args=(names, prior, predict, times, bands, lik, scatter_name))
+            sampler._random.seed(int(seed))                       # seed emcee's proposal RNG
+
+            t0 = time.perf_counter()
+            sampler.run_mcmc(p0, int(nsteps), progress=progress)
+            runtime = time.perf_counter() - t0
+        finally:
+            if pool is not None:
+                pool.close()
+                pool.join()
 
         flat = sampler.get_chain(discard=int(burnin), thin=int(thin), flat=True)
         flat_lp = sampler.get_log_prob(discard=int(burnin), thin=int(thin), flat=True)

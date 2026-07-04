@@ -221,15 +221,22 @@ four reach the same posterior on the same data (see `scripts/compare_samplers.py
 | `threshold` | `None` | Fixed acceptance distance ε (overrides `quantile` if set). **Scale warning:** with `simulate_noise=True`, `E[D] ≈ χ² + n_points` — re-derive old noiseless thresholds. |
 | `distance` | `chi2_distance` | Distance function. |
 | `simulate_noise` | `True` | Add per-point `N(0, flux_err)` white noise to each simulation so it matches the data's generative model — makes ABC exact as ε→0 and its **width calibrated** (`False` = old noiseless shell behaviour). |
+| `space` | `"auto"` | Comparison space (`'flux'`/`'magnitude'`): data, simulations, noise and distance all live here. |
+| `scatter_param` | `None` | Prior parameter used as a free extra-scatter term in the simulation noise (see §6.5; the scatter *level* is not identifiable by a χ² distance — use MCMC/SBI for it). |
 | `n_jobs` | `None` (→ min(cpu, 8)) | Processes for parallel simulation. |
 | `seed` | `0` | RNG seed (independent streams per worker via `SeedSequence`). |
+
+Sampled parameters (and the `samples` columns / `n_params` in AIC/BIC) are **`prior.names`** — a prior
+may carry more than the model's own parameters (e.g. the scatter term).
 
 `best_params` (and the AIC/BIC evaluated there) are selected by the **exact Gaussian log-likelihood**
 over the accepted draws — never by the noisy distance, whose argmin is the luckiest noise draw.
 
 **`ABCSMCSampler.fit(lc, model, prior=None, *, n_particles=500, n_rounds=5, epsilon_schedule=None,
-quantile=0.5, min_epsilon=None, simulate_noise=True, perturbation_scale=0.1, distance=chi2_distance,
-n_jobs=None, seed=0)`**
+quantile=0.5, min_epsilon=None, simulate_noise=True, space="auto", scatter_param=None,
+perturbation_scale=0.1, distance=chi2_distance, n_jobs=None, seed=0)`** — `space`/`scatter_param`
+as in `ABCSampler.fit` (the scatter is perturbed and importance-weighted like every particle
+dimension).
 — sequential rejection: round 0 draws from the prior; later rounds resample + Gaussian-perturb accepted
 particles under a shrinking epsilon (explicit `epsilon_schedule`, or adaptive `quantile` of the previous
 round's distances). Perturbs only parameters and rejects proposals outside the prior; `info` carries
@@ -243,7 +250,10 @@ width calibrated; note it shifts the distance scale (`E[D] ≈ χ² + n_points`)
 
 **`MCMCSampler.fit(lc, model, prior=None, *, nwalkers=None, nsteps=5000, burnin=1000, thin=10,
 initial_guess=None, initial_scatter=1e-3, space="auto", likelihood="auto", seed=0, progress=False,
-moves=None)`** — affine-invariant ensemble MCMC via `emcee` (`samplers.mcmc`; emcee is a **core**
+moves=None, n_jobs=None)`** — `n_jobs` runs the walkers' likelihood evaluations in a process pool
+(worth it only for expensive simulators, e.g. the ~0.1 s kilonova model); with
+`likelihood="gaussian_scatter"` a prior parameter named `sigma` is routed to the likelihood as the
+free Villar+17 extra-scatter term (see §6.5). — affine-invariant ensemble MCMC via `emcee` (`samplers.mcmc`; emcee is a **core**
 dependency). The log-posterior is the Whisper prior + the **shared likelihood layer**
 (`make_likelihood(lc, kind=likelihood, space=space)`), so MCMC uses the same physically consistent,
 `data_mode`-aware likelihood as the others (flux data → flux space, magnitude data → magnitude space).
@@ -255,9 +265,12 @@ is the convenience wrapper.
 
 **`SNPESampler.fit(lc, model, prior=None, *, num_rounds=2, num_simulations=1000, space="auto",
 density_estimator="maf", embedding_net=None, embedding_latent=32, x_format="value", predict_torch=None,
-hidden_features=None, num_transforms=None, num_bins=None, proposal_mode="posterior",
-truncate_quantile=1e-4, support_samples=10000, num_samples=10000, device="cpu", seed=0,
-show_progress=False, num_workers=1, max_logl_scan=2000, **train_kwargs)`** —
+scatter_param=None, hidden_features=None, num_transforms=None, num_bins=None,
+proposal_mode="posterior", truncate_quantile=1e-4, support_samples=10000, num_samples=10000,
+device="cpu", seed=0, show_progress=False, num_workers=1, max_logl_scan=2000, **train_kwargs)`** —
+`scatter_param` names a prior parameter used as the free Villar+17 extra-scatter term: it enters the
+simulation noise as `N(0, √(σᵢ²+σ²))` per draw, so the density estimator learns its posterior from
+the noise imprint (§6.5).
 Sequential Neural Posterior Estimation via `sbi` (`samplers.snpe`). Needs the optional **`[sbi]`** extra
 (sbi + torch; imported lazily). The simulator is Whisper's forward model + **per-point Gaussian noise
 from the data errors**; the prior is adapted automatically (`Uniform`→`BoxUniform`, mixed
@@ -320,14 +333,21 @@ the correct default). Each exposes `log_likelihood(model_flux) -> float` and is 
 | Class / function | Purpose |
 |---|---|
 | `GaussianLikelihood(lc, space="auto")` | Independent Gaussian in the chosen space. |
+| `GaussianLikelihoodWithScatter(lc, space="auto", scatter_param="sigma")` | Gaussian with a **free extra-scatter term added in quadrature** (Villar+2017): `lnL = −½Σ[(O−M)²/(σᵢ²+σ²) + ln(2π(σᵢ²+σ²))]`; `log_likelihood(model_flux, sigma_extra=…)`. `kind="gaussian_scatter"` / `"villar"`. |
 | `GaussianLikelihoodWithUpperLimits(lc, space="auto", upper_limit_sigma=3.0)` | Gaussian for detections + a CDF (flux: P(true<limit)) / survival (mag: P(true>limit)) term for upper limits. |
 | `MixtureGaussianLikelihood(lc, space="auto", alpha=0.9, sigma_out_scale=10.0)` | Outlier-robust two-component mixture (α, σ_out fixed). |
 | `make_likelihood(lc, kind="auto", space="auto", **kw)` | Build the data-appropriate likelihood (auto-selects upper-limits when present). |
 
-> Status: **MCMC and SNPE** use this likelihood directly for both sampling and metrics; **ABC/ABC-SMC**
-> still *accept* on `chi2_distance` (flux space) but now compute `AIC`/`BIC`/`max_log_likelihood` from
-> this exact likelihood at the best fit (so metrics are comparable across samplers). Routing
-> `likelihood=` / `space=` into the ABC *acceptance* itself is the remaining step.
+**Free scatter routing:** a prior parameter named after the scatter term (default `"sigma"`) is a
+*likelihood* parameter, sampled with the rest — MCMC routes it via `likelihood="gaussian_scatter"`;
+ABC/ABC-SMC/SNPE take `scatter_param="sigma"` and fold it into their **generative noise**
+(`N(0, √(σᵢ²+σ²))` with each draw's value), so every method fits the same model. Caveat (verified on
+synthetic data): a plain χ² rejection *distance* is monotonically penalised by extra noise, so the
+scatter level is **not identifiable by distance-based ABC** — fit σ with MCMC or neural SBI.
+
+> **ABC/ABC-SMC comparison space:** `space="auto"|"flux"|"magnitude"` now routes the ABC acceptance
+> itself — data, simulations, noise and distance all live in the chosen space, and
+> `AIC`/`BIC`/`max_log_likelihood` come from the exact likelihood there (comparable across samplers).
 
 Each Gaussian likelihood also exposes **`log_likelihood_pointwise(model_flux) -> array`** (the per-data-
 point log-likelihood, summing to `log_likelihood`) — the ingredient WAIC needs.
@@ -394,7 +414,7 @@ Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `scripts/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (201 tests, all passing)
+## 8. Test coverage (205 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -406,6 +426,7 @@ Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`
 | `test_metrics.py` | 4 | WAIC keys + finite + better-fit-lower ordering, `fixed=`/subsampling, and pointwise log-lik (Gaussian + upper-limits) summing to the total. |
 | `test_validation.py` | 4 | recovery z-score + coverage signs, PPC (reduced χ²≈1, predictive coverage, p≈0.5), SBC rank uniformity (calibrated vs edge-biased), `sbc_rank` bounds. |
 | `test_embeddings.py` | 6 | MLP/TCN embedding shapes + finite output, TCN receptive field covers the input, `build_embedding` dispatch + unknown-name error, `x_format` validation, ABC `simulate_noise` (n_jobs-reproducible, optional, noisy-vs-noiseless distance floor). |
+| `test_scatter.py` | 4 | Villar+17 scatter likelihood (formula vs hand calc, σ=0 reduces to Gaussian, pointwise sums, registry), MCMC recovers injected extra scatter (σ counted in AIC), ABC scatter validation + posterior column, ABC magnitude-space acceptance. |
 | `test_review_fixes.py` | 6 | scientific-review fixes: ABC exact-likelihood AIC, ABC-SMC importance weighting, WAIC drops draws not data points, mck19 π factor, CCM89 out-of-range clamp, non-positive-flux→mag guard. |
 | `test_priors.py` | 6 | Uniform/LogUniform/Prior sampling, log_prob, rescale, picklability. |
 | `test_models.py` | 8 | flare/bazin/gaussian_rise (incl. flare pre-explosion=0, bazin tail→0), custom model, errors. |

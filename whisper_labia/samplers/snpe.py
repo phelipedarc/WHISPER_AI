@@ -95,14 +95,17 @@ def _to_torch_prior(prior, sb, device="cpu"):
     return sb.MultipleIndependent(comps)
 
 
-def _build_simulator(predict, names, times, bands, model_in_space, sigma, torch, seed, extra=None):
+def _build_simulator(predict, names, times, bands, model_in_space, sigma, torch, seed, extra=None,
+                     scatter_idx=None):
     """A batched sbi simulator: parameter vector(s) -> noisy light curve in the data space.
 
     The observational noise for each parameter row is seeded from ``(seed, that row's values)``, so it
     is **reproducible** and **independent of how sbi chunks the batch across workers** — sharing a
     single RNG would make all ``num_workers>1`` processes add identical noise. When ``extra`` (a flat
     array of constant context channels: errors / times / band codes) is given, it is appended to every
-    row — the ``x_format="stacked"`` layout.
+    row — the ``x_format="stacked"`` layout. ``scatter_idx`` marks the theta column holding a free
+    extra-scatter term (Villar+2017): that row's noise becomes ``N(0, sqrt(sigma² + scatter²))``, so
+    the network *learns* the scatter dimension from its imprint on the simulations.
     """
     import zlib
 
@@ -124,7 +127,8 @@ def _build_simulator(predict, names, times, bands, model_in_space, sigma, torch,
             model_flux = np.asarray(predict(params, times, bands), dtype=float)
             mf = np.nan_to_num(model_in_space(model_flux), nan=0.0, posinf=0.0, neginf=0.0)
             row_seed = (base_seed + zlib.crc32(th[i].astype(np.float64).tobytes())) & 0xFFFFFFFF
-            out[i, :n_obs] = mf + np.random.default_rng(row_seed).normal(0.0, sig)
+            row_sig = sig if scatter_idx is None else np.sqrt(sig ** 2 + th[i, scatter_idx] ** 2)
+            out[i, :n_obs] = mf + np.random.default_rng(row_seed).normal(0.0, row_sig)
             if extra is not None:
                 out[i, n_obs:] = extra
         res = torch.as_tensor(out, dtype=torch.float32)
@@ -134,7 +138,7 @@ def _build_simulator(predict, names, times, bands, model_in_space, sigma, torch,
 
 
 def _torch_simulate(proposal, num_simulations, predict_torch, times_t, sig_t, extra_t, torch, seed,
-                    show_progress=False):
+                    show_progress=False, scatter_idx=None):
     """GPU-vectorized simulation: one batched ``predict_torch`` call replaces the per-row Python loop.
 
     ``predict_torch(theta, times)`` maps a ``(B, D)`` parameter tensor and ``(n,)`` time tensor to a
@@ -152,7 +156,9 @@ def _torch_simulate(proposal, num_simulations, predict_torch, times_t, sig_t, ex
         flux = torch.nan_to_num(flux.to(times_t.device), nan=0.0, posinf=0.0, neginf=0.0)
         gen = torch.Generator(device=flux.device.type)
         gen.manual_seed(int(seed) & 0x7FFFFFFF)
-        x = flux + torch.randn(flux.shape, generator=gen, device=flux.device) * sig_t
+        sig_row = (sig_t if scatter_idx is None
+                   else torch.sqrt(sig_t ** 2 + theta[:, scatter_idx:scatter_idx + 1] ** 2))
+        x = flux + torch.randn(flux.shape, generator=gen, device=flux.device) * sig_row
         if extra_t is not None:
             x = torch.cat([x, extra_t.unsqueeze(0).expand(x.shape[0], -1)], dim=1)
         return theta.float(), x.float()
@@ -186,6 +192,25 @@ def _build_density_estimator(density_estimator, embedding_net, hidden_features,
     return posterior_nn(model=density_estimator, **kwargs)
 
 
+class _CPUSampleProxy:
+    """Proposal wrapper whose samples live on the CPU.
+
+    sbi's parallel ``simulate_for_sbi`` (``num_workers > 1``) calls ``theta.numpy()`` on the
+    proposal's samples, which raises for CUDA-resident proposals (the prior/posterior live on the
+    training device). Only ``.sample`` is needed there, so this thin proxy moves the draws to CPU.
+    """
+
+    def __init__(self, proposal):
+        self._proposal = proposal
+
+    def sample(self, sample_shape, **kwargs):
+        try:
+            s = self._proposal.sample(sample_shape, **kwargs)
+        except TypeError:                          # plain torch priors take no extra kwargs
+            s = self._proposal.sample(sample_shape)
+        return s.detach().cpu()
+
+
 def _resolve_device(device, torch):
     """Resolve the requested SNPE training device, falling back to CPU when CUDA is unavailable.
 
@@ -214,7 +239,7 @@ class SNPESampler(BaseSampler):
 
     def fit(self, lc, model, prior=None, *, num_rounds=2, num_simulations=1000, space="auto",
             density_estimator="maf", embedding_net=None, embedding_latent=32, x_format="value",
-            predict_torch=None, hidden_features=None, num_transforms=None,
+            predict_torch=None, scatter_param=None, hidden_features=None, num_transforms=None,
             num_bins=None, proposal_mode="posterior", truncate_quantile=1e-4,
             support_samples=10000, num_samples=10000, device="cpu", seed=0, show_progress=False,
             num_workers=1, max_logl_scan=2000, **train_kwargs):
@@ -243,6 +268,13 @@ class SNPESampler(BaseSampler):
         torch implementation of the model: ``(B, D)`` parameters + ``(n,)`` times → ``(B, n)`` flux) to
         replace the per-row Python simulator with a single on-device batched call — per-point white
         noise ``N(0, err)`` is added on-device. Flux-space data only.
+
+        **Free extra scatter (Villar+2017):** ``scatter_param`` names a prior parameter that is a
+        LIKELIHOOD scatter term, not a model input: each simulation's noise becomes
+        ``N(0, sqrt(err² + scatter²))`` with that draw's value, so the density estimator learns the
+        scatter posterior from its imprint on the simulations — the SBI counterpart of
+        :class:`~whisper_labia.likelihood.GaussianLikelihoodWithScatter`, which is also used for the
+        exact ``max_log_likelihood``/AIC/BIC at the best draw.
 
         **Sequential scheme:** ``proposal_mode='posterior'`` (default) is SNPE-C (propose from the latest
         posterior). ``proposal_mode='restricted'`` is **truncated SNPE** — each round restricts the prior
@@ -281,6 +313,12 @@ class SNPESampler(BaseSampler):
         predict = model.predict
         param_names = list(prior.names)
         k, n = len(param_names), int(len(times))
+        scatter_idx = None
+        if scatter_param is not None:
+            if scatter_param not in param_names:
+                raise ValueError(f"scatter_param {scatter_param!r} is not in the prior "
+                                 f"({param_names}).")
+            scatter_idx = param_names.index(scatter_param)
 
         # Constant context channels for the stacked layout: per-point error, time, integer band code.
         sig_clean = np.where(np.isfinite(np.asarray(lik.sigma, float)) & (np.asarray(lik.sigma) > 0),
@@ -305,7 +343,8 @@ class SNPESampler(BaseSampler):
         torch_prior, _, prior_returns_numpy = sb.process_prior(torch_prior)
         if predict_torch is None:
             simulator = _build_simulator(
-                predict, param_names, times, bands, lik.model_in_space, lik.sigma, torch, seed, extra)
+                predict, param_names, times, bands, lik.model_in_space, lik.sigma, torch, seed, extra,
+                scatter_idx)
             simulator = sb.process_simulator(simulator, torch_prior, prior_returns_numpy)
             sb.check_sbi_inputs(simulator, torch_prior)
             times_t = sig_t = extra_t = None
@@ -331,10 +370,13 @@ class SNPESampler(BaseSampler):
         for r in range(int(num_rounds)):
             if predict_torch is not None:
                 theta, x = _torch_simulate(proposal, num_simulations, predict_torch, times_t, sig_t,
-                                           extra_t, torch, int(seed) + 7919 * r, show_progress)
+                                           extra_t, torch, int(seed) + 7919 * r, show_progress,
+                                           scatter_idx)
             else:
+                # Parallel simulation needs CPU theta (sbi calls theta.numpy() when chunking).
+                sim_proposal = _CPUSampleProxy(proposal) if int(num_workers) > 1 else proposal
                 theta, x = sb.simulate_for_sbi(
-                    simulator, proposal, num_simulations=int(num_simulations),
+                    simulator, sim_proposal, num_simulations=int(num_simulations),
                     num_workers=num_workers, seed=int(seed) + r, show_progress_bar=show_progress)
             if restricted:
                 # Truncated SNPE: the proposal is a RestrictedPrior (not a posterior) -> first-round loss.
@@ -367,11 +409,22 @@ class SNPESampler(BaseSampler):
             .detach().cpu().numpy(), dtype=float)
         samples = pd.DataFrame(samples_np, columns=param_names)
 
-        # Exact Gaussian metrics at the best (max-likelihood) posterior draw.
+        # Exact Gaussian metrics at the best (max-likelihood) posterior draw — scatter-augmented
+        # (with each draw's own scatter value) when a scatter parameter is fitted.
+        if scatter_param is not None:
+            from ..likelihood import GaussianLikelihoodWithScatter
+            lik_metrics = GaussianLikelihoodWithScatter(lc, space=space, scatter_param=scatter_param)
+
+            def _row_logl(row):
+                mf = predict({nm: float(v) for nm, v in zip(param_names, row)}, times, bands)
+                return lik_metrics.log_likelihood(mf, sigma_extra=float(row[scatter_idx]))
+        else:
+            def _row_logl(row):
+                return lik.log_likelihood(
+                    predict({nm: float(v) for nm, v in zip(param_names, row)}, times, bands))
+
         scan = samples_np if len(samples_np) <= max_logl_scan else samples_np[:max_logl_scan]
-        logls = np.array([
-            lik.log_likelihood(predict({nm: float(v) for nm, v in zip(param_names, row)}, times, bands))
-            for row in scan], dtype=float)
+        logls = np.array([_row_logl(row) for row in scan], dtype=float)
         if np.any(np.isfinite(logls)):
             best_idx = int(np.nanargmax(logls))
             max_log_likelihood = float(logls[best_idx])
@@ -389,6 +442,7 @@ class SNPESampler(BaseSampler):
             "embedding_net": emb_spec,
             "x_format": x_format,
             "sim_backend": "torch" if predict_torch is not None else "numpy",
+            "scatter_param": scatter_param,
             "proposal_mode": proposal_mode,
             "truncate_quantile": float(truncate_quantile) if proposal_mode == "restricted" else None,
             "space": lik.space, "num_samples": int(num_samples), "device": str(device),
