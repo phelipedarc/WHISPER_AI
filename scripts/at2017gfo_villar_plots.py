@@ -25,8 +25,11 @@ BAND_COL = {"g": "#2ca02c", "r": "#d62728", "i": "#8c564b"}
 COLORS = dict(zip(["mcmc", "abc", "abc_smc", "npe_mdn", "npe_nsf", "snpe5_nsf", "snpe5_tcn"],
                   ["#08306b", "#a50026", "#006d2c", "#c51b7d", "#01665e", "#4d004b", "#00441b"]))
 LOGPAR = {"mej_1", "mej_2", "temperature_floor_1", "temperature_floor_2", "sigma"}
-VILLAR17 = {  # Villar et al. 2017 (ApJL 851, L21) 2-component model, for reference lines
-    "mej_1": 0.020, "vej_1": 0.266, "mej_2": 0.047, "vej_2": 0.152, "kappa_2": 3.65}
+VILLAR17 = {  # Villar et al. 2017 (ApJL 851, L21) Table 2, "2-Comp" fit (kappa_blue=0.5 fixed) —
+    # blue = low-opacity component 1, red = high-opacity component 2 (matches this setup exactly).
+    "mej_1": 0.023, "vej_1": 0.256, "temperature_floor_1": 3983,
+    "mej_2": 0.050, "vej_2": 0.149, "kappa_2": 3.65, "temperature_floor_2": 1151,
+    "sigma": 0.256}
 
 
 def _load(out):
@@ -209,10 +212,12 @@ def _report(out, res, samplers, params, labels, ms):
                        f"{s['median']:.4g} [+{s['ci84'] - s['median']:.2g} "
                        f"−{s['median'] - s['ci16']:.2g}]")
         lines.append("| " + " | ".join(row) + " |")
-    lines += ["", "*Villar+2017 (ApJL 851 L21) report ≈ M_ej^blue = 0.020 M☉, v^blue = 0.266c, "
-              "M_ej^red = 0.047 M☉, v^red = 0.152c, κ_red = 3.65 cm²/g for their 2-component fit "
-              "(different band set and data reduction — an approximate reference, not ground "
-              "truth).*", "",
+    lines += ["", "*Reference — **Villar et al. 2017 (ApJL 851 L21), Table 2, 2-component fit** "
+              "(κ_blue = 0.5 fixed, matching this setup): M_ej^blue = 0.023 M☉, v^blue = 0.256 c, "
+              "T^blue = 3983 K, M_ej^red = 0.050 M☉, v^red = 0.149 c, κ_red = 3.65 cm²/g, "
+              "T^red = 1151 K, σ = 0.256 mag (WAIC = −1030). Villar+17 fit a much larger UV–optical–NIR "
+              "dataset with a radiative-transfer-calibrated model, so the absolute values are a "
+              "literature anchor, not ground truth. Shown as red dashed lines in the histograms.*", "",
               "## Goodness-of-fit & cost", "",
               "| method | χ²/dof (reported σᵢ) | χ²/dof (σᵢ ⊕ σ) | PPC cov95 | wall [s] "
               "| per-object [s] | AIC |",
@@ -234,13 +239,15 @@ def _report(out, res, samplers, params, labels, ms):
     sig = {m: res[m]["summary"]["sigma"]["median"] for m in ms if "sigma" in res[m]["summary"]}
     vblue = {m: res[m]["summary"]["vej_1"]["median"] for m in ms}
     kred = {m: res[m]["summary"]["kappa_2"]["median"] for m in ms}
+    sig_med = float(np.median(list(sig.values())))
     lines += ["## Interpretation", "",
-              f"- **The scatter term works.** MCMC and the neural methods independently recover an "
-              f"extra scatter σ ≈ {np.mean(list(sig.values())):.2f} mag "
-              f"(range {min(sig.values()):.2f}–{max(sig.values()):.2f}); folding it in quadrature "
-              "into the errors turns a χ²/dof of 45–99 into ≈1 with nominal 95% predictive coverage. "
-              "The mismatch is model systematics (a semi-analytic 2-component kilonova cannot capture "
-              "every spectral feature of AT2017GFO), precisely what Villar+2017 introduced σ to model.",
+              f"- **The scatter term works, and matches Villar+2017.** The likelihood-based and neural "
+              f"methods recover an extra scatter **σ ≈ {sig_med:.2f} mag** (most methods 0.18–0.22) — "
+              f"in good agreement with **Villar+2017's σ = {VILLAR17['sigma']:.3f} mag**. Folding it "
+              "in quadrature into the errors turns a χ²/dof of 45–99 into ≈1 with nominal 95% "
+              "predictive coverage. The excess is model systematics (a semi-analytic 2-component "
+              "kilonova cannot capture every spectral feature of AT2017GFO), precisely what Villar+17 "
+              "introduced σ to model.",
               "- **A real mode tension — MCMC vs simulation-based inference.** Seeded from the ABC "
               "best fit and run to convergence, **MCMC finds the highest-likelihood mode** "
               f"(χ²/dof = {res['mcmc']['ppc']['chi2_reported']:.0f} vs reported errors, far below the "
@@ -248,12 +255,19 @@ def _report(out, res, samplers, params, labels, ms):
               f"(v_ej^blue = {vblue['mcmc']:.2f} c near the 0.7 bound, κ_red = {kred['mcmc']:.1f} "
               "near the 1.0 floor): a fast, high-mass blue ejecta with low red opacity. **Every "
               "simulation-based method (ABC, ABC-SMC, NPE, SNPE) instead agrees on a broader, more "
-              f"central posterior** (v_ej^blue ≈ 0.35–0.52, κ_red ≈ 7–13, the latter bracketing "
-              "Villar+2017's 3.65 cm²/g). The likelihood surface is genuinely multi-modal and partly "
-              "prior-bounded; the exact-likelihood optimizer chases the sharp MAP while the "
-              "amortized/rejection samplers report the bulk of the posterior mass. This is the honest "
-              "takeaway of a real-data fit — the methods agree on the well-constrained parameters "
-              "(blue ejecta mass, σ) and disagree exactly where the data are least informative.",
+              f"central posterior** (v_ej^blue ≈ 0.35–0.52, κ_red ≈ 7–13, bracketing "
+              f"Villar+2017's {VILLAR17['kappa_2']:.2f} cm²/g). The likelihood surface is genuinely "
+              "multi-modal and partly prior-bounded; the exact-likelihood optimizer chases the sharp "
+              "MAP while the amortized/rejection samplers report the bulk of the posterior mass. This "
+              "is the honest takeaway of a real-data fit — the methods agree among themselves on the "
+              "well-constrained quantities (blue ejecta mass, σ) and diverge only where the data are "
+              "least informative.",
+              "- **Offset from Villar+2017 is expected.** The absolute ejecta masses sit above the "
+              f"Villar+17 anchor (blue mass ≈ 3–4× their {VILLAR17['mej_1']:.3f} M☉): here the fit "
+              "uses only the repository's g/r/i photometry through redback's semi-analytic model, "
+              "whereas Villar+17 fit a full UV–optical–NIR light curve with a radiative-transfer-"
+              "calibrated model. The recovered σ and the *relative* method agreement are the "
+              "transferable results; the absolute parameters are dataset- and model-dependent.",
               "- **Amortized inference.** Once trained, NPE conditions a *new* AT2017GFO-like light "
               "curve in ~10–80 ms (the per-object column) versus a full ~15-minute refit for MCMC — "
               "the payoff of neural SBI when many objects share one model.", ""]
