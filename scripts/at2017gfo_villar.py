@@ -38,10 +38,14 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # VILLAR_FULL=1 -> full UV-optical-NIR dataset (11 bands spanning Swift-UV to 2MASS-Ks); default is the
 # g/r/i-only reduction. TMAX_DAYS restricts the light curve to the early kilonova (0-30 d rest of decay).
 FULL = os.environ.get("VILLAR_FULL") == "1"
+# Comparison space for the likelihood/distance: "magnitude" (Villar+17; σ ≈ fractional-flux scatter)
+# or "flux" (additive-flux scatter). Set VILLAR_SPACE=flux for the flux-space comparison.
+SPACE = os.environ.get("VILLAR_SPACE", "magnitude")
+_SPACE_SUFFIX = "_flux" if SPACE == "flux" else ""            # magnitude = no suffix
 DATA = os.path.join(HERE, "tests", "data",
                     "at2017gfo_full.csv" if FULL else "at2017gfo.csv")
 OUT = os.path.join(HERE, "docs", "figures",
-                   "at2017gfo_villar_full" if FULL else "at2017gfo_villar")
+                   ("at2017gfo_villar_full" if FULL else "at2017gfo_villar") + _SPACE_SUFFIX)
 BANDS = (["uvot::uvw1", "B", "g", "V", "r", "i", "z", "Y", "J", "H", "Ks"]  # UV -> optical -> NIR
          if FULL else ["g", "r", "i"])
 EXPLOSION = 57982.529 if FULL else 57982.0     # GW170817 merger (MJD); g/r/i run used 57982.0
@@ -89,7 +93,10 @@ PRIOR_PHYS = {
     "kappa_2": Uniform(1.0, 30.0),
     "temperature_floor_2": LogUniform(100.0, 6000.0),
 }
-PRIOR_FULL = Prior({**PRIOR_PHYS, "sigma": LogUniform(0.01, 2.0)})   # + scatter (mag)
+# Extra-scatter prior is space-specific: magnitudes for magnitude space, Jy for flux space (the
+# AT2017gfo fluxes span ~1e-6..7e-4 Jy, so a mag-scale prior would swamp the data).
+SIGMA_PRIOR = LogUniform(1e-8, 1e-3) if SPACE == "flux" else LogUniform(0.01, 2.0)
+PRIOR_FULL = Prior({**PRIOR_PHYS, "sigma": SIGMA_PRIOR})             # + scatter (mag or Jy)
 PRIOR_ABC = Prior(dict(PRIOR_PHYS))                                  # distance-based: no scatter dim
 
 
@@ -101,21 +108,21 @@ def setup():
     return lc[keep] if not keep.all() else lc
 
 
-# method -> (label, fn, prior, kwargs). All magnitude-space; neural = GPU + stacked input.
-NEURAL = dict(space="magnitude", scatter_param="sigma", x_format="stacked", device="cuda",
+# method -> (label, fn, prior, kwargs). space set by SPACE; neural = GPU + stacked input.
+NEURAL = dict(space=SPACE, scatter_param="sigma", x_format="stacked", device="cuda",
               seed=0, training_batch_size=1000, num_workers=24)
 SAMPLERS = {
     "mcmc": ("MCMC", wp.fit_MCMC, PRIOR_FULL,
              # 11-band UVOIR data is ~2x costlier per predict but far more constraining, so fewer steps
              # converge; g/r/i keeps the longer chain. Both sized past 50*tau for converged=True.
              dict(nsteps=8000 if FULL else 12000, burnin=2500 if FULL else 4000, thin=4,
-                  nwalkers=32 if FULL else 40, space="magnitude",
+                  nwalkers=32 if FULL else 40, space=SPACE,
                   likelihood="gaussian_scatter", n_jobs=48, seed=0)),
     "abc": ("ABC", wp.fit_ABC, PRIOR_ABC,
-            dict(n_simulations=60_000, quantile=0.005, space="magnitude", n_jobs=48, seed=0)),
+            dict(n_simulations=60_000, quantile=0.005, space=SPACE, n_jobs=48, seed=0)),
     "abc_smc": ("ABC-SMC", wp.fit_ABC_SMC, PRIOR_ABC,
                 dict(n_particles=800, n_rounds=8, quantile=0.5, min_epsilon="auto",
-                     space="magnitude", n_jobs=48, seed=0)),
+                     space=SPACE, n_jobs=48, seed=0)),
     "npe_mdn": ("NPE-MDN (GPU)", wp.fit_SNPE, PRIOR_FULL,
                 dict(num_rounds=1, num_simulations=25_000, num_samples=10_000,
                      density_estimator="mdn", max_num_epochs=300, stop_after_epochs=15, **NEURAL)),
@@ -135,15 +142,18 @@ SAMPLERS = {
 
 
 def _ppc_arrays(res, lc, model, n_draws=200, seed=0):
-    """Posterior-predictive in MAGNITUDE space: smooth per-band model bands on a grid + noise-inflated
-    predictive coverage at the data points (using each draw's own scatter when fitted)."""
+    """Posterior-predictive check. Smooth per-band model bands are drawn in **magnitude** for a common
+    display across the flux- and magnitude-space fits; the χ²/dof and noise-inflated predictive coverage
+    are computed in the **fit's own space** (``SPACE``) so the fitted scatter σ (magnitudes vs Jy) is
+    applied consistently."""
+    from whisper_labia import GaussianLikelihood
     from whisper_labia.models import get_model
     m = get_model(model)
     rng = np.random.default_rng(seed)
     t = np.asarray(lc.time, float)
     bands = np.asarray(lc.band).astype(str)
-    obs = np.asarray(lc.magnitude, float)
-    err = np.asarray(lc.magnitude_err, float)
+    lik = GaussianLikelihood(lc, space=SPACE)                 # observation + errors in the fit space
+    y_obs, err = np.asarray(lik.y, float), np.asarray(lik.sigma, float)
     names = [p for p in res.samples.columns if p != "distance"]
     S = res.samples[names].to_numpy(float)
     idx = rng.choice(len(S), size=min(n_draws, len(S)), replace=len(S) < n_draws)
@@ -156,32 +166,32 @@ def _ppc_arrays(res, lc, model, n_draws=200, seed=0):
     order = np.argsort(t, kind="stable")
     inv = np.argsort(order, kind="stable")
     t_sorted, b_sorted = t[order], bands[order]
-    curves = np.empty((len(idx), len(tg) * len(BANDS)))
-    preds = np.empty((len(idx), len(t)))
+    curves = np.empty((len(idx), len(tg) * len(BANDS)))       # magnitude, for display
+    preds = np.empty((len(idx), len(t)))                      # model in fit space, for coverage
     sig_draw = np.zeros(len(idx))
     for i, j in enumerate(idx):
         th = dict(zip(names, S[j]))
         fg = np.asarray(m.predict(th, grid_t, grid_b), float)
         fd = np.asarray(m.predict(th, t_sorted, b_sorted), float)[inv]
         curves[i] = -2.5 * np.log10(np.clip(fg, 1e-300, None) / 3631.0)
-        preds[i] = -2.5 * np.log10(np.clip(fd, 1e-300, None) / 3631.0)
+        preds[i] = np.asarray(lik.model_in_space(fd), float)
         sig_draw[i] = float(th.get("sigma", 0.0))
     y_rep = preds + rng.normal(0.0, np.sqrt(err ** 2 + sig_draw[:, None] ** 2))
     lo95, lo68, hi68, hi95 = np.percentile(y_rep, [2.5, 16, 84, 97.5], axis=0)
-    cov68 = float(np.mean((obs >= lo68) & (obs <= hi68)))
-    cov95 = float(np.mean((obs >= lo95) & (obs <= hi95)))
+    inside = lambda lo, hi: float(np.mean((y_obs >= np.minimum(lo, hi)) & (y_obs <= np.maximum(lo, hi))))
+    cov68, cov95 = inside(lo68, hi68), inside(lo95, hi95)
     band_curves = {b: np.percentile(curves[:, k * len(tg):(k + 1) * len(tg)], [2.5, 50, 97.5], axis=0)
                    for k, b in enumerate(BANDS)}
-    # chi2 at the best draw: vs reported errors alone, and vs errors + fitted scatter
+    # chi2 at the best draw (in the fit space): vs reported errors alone, and vs errors + fitted scatter
     best = res.best_params
-    mf = np.asarray(m.predict(best, t_sorted, b_sorted), float)[inv]
-    mmag = -2.5 * np.log10(np.clip(mf, 1e-300, None) / 3631.0)
-    dof = max(len(obs) - len(names), 1)
-    chi2_rep = float(np.sum(((obs - mmag) / err) ** 2) / dof)
+    mfit = np.asarray(lik.model_in_space(np.asarray(m.predict(best, t_sorted, b_sorted), float)[inv]),
+                      float)
+    dof = max(len(y_obs) - len(names), 1)
+    chi2_rep = float(np.sum(((y_obs - mfit) / err) ** 2) / dof)
     s_best = float(best.get("sigma", 0.0))
-    chi2_sc = float(np.sum((obs - mmag) ** 2 / (err ** 2 + s_best ** 2)) / dof)
+    chi2_sc = float(np.sum((y_obs - mfit) ** 2 / (err ** 2 + s_best ** 2)) / dof)
     return dict(tgrid=tg, band_curves=band_curves, cov68=cov68, cov95=cov95,
-                chi2_reported=chi2_rep, chi2_scatter=chi2_sc, dof=dof)
+                chi2_reported=chi2_rep, chi2_scatter=chi2_sc, dof=dof, space=SPACE)
 
 
 def fit(method):
@@ -221,7 +231,7 @@ def fit(method):
         "method": method, "label": label, "params": names,
         "summary": {p: res.summary[p] for p in names},
         "best_params": res.best_params,
-        "ppc": {k: ppc[k] for k in ("cov68", "cov95", "chi2_reported", "chi2_scatter", "dof")},
+        "ppc": {k: ppc[k] for k in ("cov68", "cov95", "chi2_reported", "chi2_scatter", "dof", "space")},
         "runtime_s": float(res.runtime_s), "wall_s": float(wall),
         "amortized_s": (float(amortized) if amortized is not None else None),
         "n_samples": int(res.n_samples), "aic": float(res.aic), "bic": float(res.bic),

@@ -72,18 +72,22 @@ def plot(out, samplers, params, labels, bands):
 
     # ---------------- histograms: rows = parameters, columns = methods, annotated median ± CI ----
     from matplotlib.ticker import LogLocator, MaxNLocator
+    # log x-axis for scale parameters: temperature floors always, and σ too (it spans orders of
+    # magnitude in flux space [Jy] and has a LogUniform prior). Temp floors also get the physical
+    # LogUniform(100, 6000) range clip; σ is not clipped.
     tfloor = {"temperature_floor_1", "temperature_floor_2"}
+    logx = tfloor | {"sigma"}
 
     # ONE shared x-range per physical variable (union of the methods' posterior bulk), with matching
-    # bin edges, so every row is directly comparable across methods. Temperature floors are on a log
-    # axis and clipped to the physical LogUniform(100, 6000) prior range (neural tails can leak past it).
+    # bin edges, so every row is directly comparable across methods.
     xr, xbins = {}, {}
     for p in allp:
         pooled = np.concatenate([npz[m]["samples"][:, list(npz[m]["params"]).index(p)]
                                  for m in ms if p in list(npz[m]["params"])])
-        if p in tfloor:
-            lo = max(np.percentile(pooled[pooled > 0], 1.0), 90.0)
-            hi = min(np.percentile(pooled[pooled > 0], 99.0), 6200.0)
+        if p in logx:
+            lo, hi = np.percentile(pooled[pooled > 0], [1.0, 99.0])
+            if p in tfloor:                       # clip to the physical prior range (neural tails leak)
+                lo, hi = max(lo, 90.0), min(hi, 6200.0)
             xr[p] = (lo * 0.85, hi * 1.15)
             xbins[p] = np.logspace(np.log10(xr[p][0]), np.log10(xr[p][1]), 37)
         else:
@@ -99,7 +103,7 @@ def plot(out, samplers, params, labels, bands):
         cols = {p: d["samples"][:, i] for i, p in enumerate(list(d["params"]))}
         for i, p in enumerate(allp):
             a = ax[i][j]
-            islog = p in tfloor
+            islog = p in logx
             if islog:
                 a.set_xscale("log")
             a.set_xlim(*xr[p])
@@ -196,7 +200,11 @@ def plot(out, samplers, params, labels, bands):
     fig = plt.figure(figsize=(15.5, 5.4))
     gs = fig.add_gridspec(1, 2, width_ratios=[1.7, 0.85], wspace=0.30)
     ax0 = fig.add_subplot(gs[0])
-    show6 = ["mej_1", "vej_1", "mej_2", "vej_2", "kappa_2", "sigma"]
+    # physical params compare across spaces; σ is space-specific (mag vs Jy) so drop it from the
+    # Villar-normalised panel for the flux run.
+    show6 = ["mej_1", "vej_1", "mej_2", "vej_2", "kappa_2"]
+    if not os.path.basename(out.rstrip("/")).endswith("_flux"):
+        show6 = show6 + ["sigma"]
     xs = np.arange(len(show6))
     for k, m in enumerate(ms):
         d = res[m]["summary"]
@@ -238,15 +246,19 @@ def plot(out, samplers, params, labels, bands):
 
 def _report(out, res, samplers, params, labels, ms):
     allp = params + ["sigma"]
-    full = "_full" in os.path.basename(out.rstrip("/"))
+    base = os.path.basename(out.rstrip("/"))
+    full = "_full" in base
+    space = "flux" if base.endswith("_flux") else "magnitude"
+    space_desc = ("**flux space** (additive-flux scatter σ [Jy])" if space == "flux"
+                  else "**apparent-magnitude space** (Villar+17; σ ≈ fractional-flux scatter [mag])")
     data_desc = ("**full UV → optical → NIR photometry** (11 bands, Swift-UV `uvw1` through 2MASS "
                  "`Ks`, SNR ≥ 3, 0–30 d)" if full else "g/r/i photometry (SNR ≥ 3)")
     lines = ["# AT2017GFO — Villar+2017-style two-component kilonova with WHISPER"
-             + (" (full UVOIR)" if full else ""), "",
+             + (" (full UVOIR" + (", flux space)" if space == "flux" else ")") if full else ""), "",
              "Real-data application: the redback `two_component_kilonova` model with "
              "**κ_blue = 0.5 cm²/g fixed**, redshift fixed (z = 0.00984), **κ_red and both "
              f"temperature floors free**, fit to the AT2017GFO {data_desc} in "
-             "apparent-magnitude space. The likelihood-based and neural methods also fit the "
+             f"{space_desc}. The likelihood-based and neural methods also fit the "
              "**Villar+17 extra-scatter term σ** (added in quadrature to the reported errors):", "",
              "$$\\ln\\mathcal{L} = -\\tfrac{1}{2}\\sum_i\\left[\\frac{(O_i-M_i)^2}"
              "{\\sigma_i^2+\\sigma^2} + \\ln\\big(2\\pi(\\sigma_i^2+\\sigma^2)\\big)\\right]$$", "",
