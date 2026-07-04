@@ -42,11 +42,28 @@ $$\ln\mathcal{L} = -\tfrac{1}{2}\sum_i\left[\frac{(O_i-M_i)^2}{\sigma_i^2+\sigma
 - **Offset from Villar+2017 is expected.** The absolute ejecta masses sit above the Villar+17 anchor (blue mass ≈ 3–4× their 0.023 M☉): here the fit uses only the repository's g/r/i photometry through redback's semi-analytic model, whereas Villar+17 fit a full UV–optical–NIR light curve with a radiative-transfer-calibrated model. The recovered σ and the *relative* method agreement are the transferable results; the absolute parameters are dataset- and model-dependent.
 - **Amortized inference.** Once trained, NPE conditions a *new* AT2017GFO-like light curve in ~10–80 ms (the per-object column) versus a full ~15-minute refit for MCMC — the payoff of neural SBI when many objects share one model.
 
+## Figures
 
-![histograms](figures/at2017gfo_villar/villar_hist.png)
+### Posterior histograms
 
-![corner](figures/at2017gfo_villar/villar_corner.png)
+Per-parameter marginal posteriors (rows) for every method (columns), each annotated with its median ± 68% CI; each variable shares one x-range across methods for direct comparison. σ is *not fitted* by the distance-based ABC family.
 
-![ppc](figures/at2017gfo_villar/villar_ppc.png)
+![posterior histograms](figures/at2017gfo_villar/villar_hist.png)
+
+### Corner plot
+
+Joint posteriors of all fitted parameters (ejecta masses shown as log₁₀), every method overlaid. The neural and ABC methods overlap in a broad central region while MCMC (dark blue) sits apart in its sharp, prior-edge MAP — the mode tension made visual, including the parameter correlations (e.g. M_ej^red–v_ej^red, κ_red–T_floor^red).
+
+![corner plot](figures/at2017gfo_villar/villar_corner.png)
+
+### Posterior-predictive light curves
+
+Each method's 95% posterior-predictive model band in g/r/i (coloured) over the AT2017GFO photometry, with the per-panel χ²/dof (vs reported errors and vs errors ⊕ σ) and 95% coverage. MCMC gives the tightest, best-tracking band; the neural methods carry wider bands reflecting the marginal σ uncertainty.
+
+![posterior-predictive light curves](figures/at2017gfo_villar/villar_ppc.png)
+
+### Summary — medians & runtime
+
+Parameter medians ± 68% CI across methods, each normalised to the Villar+2017 value where available (dashed line = Villar+17), and the end-to-end wall time per method.
 
 ![summary](figures/at2017gfo_villar/villar_summary.png)

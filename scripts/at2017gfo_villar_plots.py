@@ -300,11 +300,29 @@ def _report(out, res, samplers, params, labels, ms):
               "- **Amortized inference.** Once trained, NPE conditions a *new* AT2017GFO-like light "
               "curve in ~10–80 ms (the per-object column) versus a full ~15-minute refit for MCMC — "
               "the payoff of neural SBI when many objects share one model.", ""]
-    lines += ["",
-              "![histograms](figures/at2017gfo_villar/villar_hist.png)", "",
-              "![corner](figures/at2017gfo_villar/villar_corner.png)", "",
-              "![ppc](figures/at2017gfo_villar/villar_ppc.png)", "",
-              "![summary](figures/at2017gfo_villar/villar_summary.png)", ""]
+    fig_dir = "figures/at2017gfo_villar"
+    lines += ["## Figures", "",
+              "### Posterior histograms", "",
+              "Per-parameter marginal posteriors (rows) for every method (columns), each annotated "
+              "with its median ± 68% CI; each variable shares one x-range across methods for direct "
+              "comparison. σ is *not fitted* by the distance-based ABC family.", "",
+              f"![posterior histograms]({fig_dir}/villar_hist.png)", "",
+              "### Corner plot", "",
+              "Joint posteriors of all fitted parameters (ejecta masses shown as log₁₀), every method "
+              "overlaid. The neural and ABC methods overlap in a broad central region while MCMC (dark "
+              "blue) sits apart in its sharp, prior-edge MAP — the mode tension made visual, including "
+              "the parameter correlations (e.g. M_ej^red–v_ej^red, κ_red–T_floor^red).", "",
+              f"![corner plot]({fig_dir}/villar_corner.png)", "",
+              "### Posterior-predictive light curves", "",
+              "Each method's 95% posterior-predictive model band in g/r/i (coloured) over the "
+              "AT2017GFO photometry, with the per-panel χ²/dof (vs reported errors and vs errors ⊕ σ) "
+              "and 95% coverage. MCMC gives the tightest, best-tracking band; the neural methods carry "
+              "wider bands reflecting the marginal σ uncertainty.", "",
+              f"![posterior-predictive light curves]({fig_dir}/villar_ppc.png)", "",
+              "### Summary — medians & runtime", "",
+              "Parameter medians ± 68% CI across methods, each normalised to the Villar+2017 value "
+              "where available (dashed line = Villar+17), and the end-to-end wall time per method.", "",
+              f"![summary]({fig_dir}/villar_summary.png)", ""]
     path = os.path.join(os.path.dirname(out.rstrip("/")), "..", "REPORT_at2017gfo_villar.md")
     path = os.path.abspath(path)
     open(path, "w").write("\n".join(lines))
