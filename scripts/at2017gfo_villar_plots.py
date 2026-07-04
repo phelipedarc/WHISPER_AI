@@ -21,7 +21,18 @@ import matplotlib.pyplot as plt
 
 import whisper_labia as wp
 
-BAND_COL = {"g": "#2ca02c", "r": "#d62728", "i": "#8c564b"}
+_BAND_FIXED = {"g": "#2ca02c", "r": "#d62728", "i": "#8c564b"}
+
+
+def _band_colors(bands):
+    """Per-band colours: the g/r/i palette for the optical-only run, else a UV->NIR gradient
+    (bands are ordered blue->red, so a spectral colormap reads as increasing wavelength)."""
+    if all(b in _BAND_FIXED for b in bands):
+        return {b: _BAND_FIXED[b] for b in bands}
+    import matplotlib.cm as cm
+    cmap = cm.get_cmap("turbo")
+    n = max(len(bands) - 1, 1)
+    return {b: cmap(0.04 + 0.92 * k / n) for k, b in enumerate(bands)}
 COLORS = dict(zip(["mcmc", "abc", "abc_smc", "npe_mdn", "npe_nsf", "snpe5_nsf", "snpe5_tcn"],
                   ["#08306b", "#a50026", "#006d2c", "#c51b7d", "#01665e", "#4d004b", "#00441b"]))
 LOGPAR = {"mej_1", "mej_2", "temperature_floor_1", "temperature_floor_2", "sigma"}
@@ -147,8 +158,9 @@ def plot(out, samplers, params, labels, bands):
     # sharey=True -> ONE common magnitude axis for every panel; its range is set from the data (+the
     # median model curves) so the σ-inflated 95% band tails simply clip at the edges instead of
     # blowing the scale up to 30-40 mag and squashing the informative region.
-    fig, ax = plt.subplots(len(ms), 1, figsize=(8.6, 2.4 * len(ms)), squeeze=False,
+    fig, ax = plt.subplots(len(ms), 1, figsize=(9.4, 2.4 * len(ms)), squeeze=False,
                            sharex=True, sharey=True)
+    band_col = _band_colors(bands)                # g/r/i palette or a UV->NIR gradient
     ref = npz[ms[0]]
     t, band = ref["time"], ref["band"].astype(str)
     mag, err = ref["mag"], ref["mag_err"]
@@ -159,18 +171,21 @@ def plot(out, samplers, params, labels, bands):
         a = ax[i][0]; d = npz[m]
         for b in bands:
             lo, med, hi = d[f"curve_{b}"]
-            a.fill_between(d["tgrid"], lo, hi, color=BAND_COL[b], alpha=0.25)
-            a.plot(d["tgrid"], med, color=BAND_COL[b], lw=1.4)
+            a.fill_between(d["tgrid"], lo, hi, color=band_col[b], alpha=0.20)
+            a.plot(d["tgrid"], med, color=band_col[b], lw=1.3, label=b if i == 0 else None)
             sel = band == b
-            a.errorbar(t[sel], mag[sel], yerr=err[sel], fmt="o", ms=2.6, color=BAND_COL[b],
+            a.errorbar(t[sel], mag[sel], yerr=err[sel], fmt="o", ms=2.6, color=band_col[b],
                        alpha=0.75, lw=0.7)
         j = res[m]["ppc"]
         a.set_ylim(y_faint, y_bright)             # inverted (faint at bottom); shared across panels
         a.set_ylabel(samplers[m][0], fontsize=10)
         a.text(0.99, 0.05, f"χ²/dof={j['chi2_reported']:.1f}  (+σ: {j['chi2_scatter']:.2f})  "
                f"cov95={j['cov95']:.2f}", transform=a.transAxes, ha="right", va="bottom", fontsize=9)
-    ax[-1][0].set_xlabel("days since merger (MJD 57982)")
-    fig.suptitle("AT2017GFO posterior-predictive light curves — g/r/i (95% model band + data)",
+    ax[0][0].legend(loc="upper right", ncol=min(len(bands), 6), fontsize=8, frameon=False,
+                    title="band (blue→red)", columnspacing=0.9, handletextpad=0.4)
+    ax[-1][0].set_xlabel("days since merger (MJD 57982.53)")
+    _bandlabel = "g/r/i" if all(b in _BAND_FIXED for b in bands) else "UV→optical→NIR (11 bands)"
+    fig.suptitle(f"AT2017GFO posterior-predictive light curves — {_bandlabel} (95% model band + data)",
                  y=1.0, weight="bold")
     fig.tight_layout()
     fig.savefig(os.path.join(out, "villar_ppc.png"), dpi=140, bbox_inches="tight")
@@ -223,10 +238,14 @@ def plot(out, samplers, params, labels, bands):
 
 def _report(out, res, samplers, params, labels, ms):
     allp = params + ["sigma"]
-    lines = ["# AT2017GFO — Villar+2017-style two-component kilonova with WHISPER", "",
+    full = "_full" in os.path.basename(out.rstrip("/"))
+    data_desc = ("**full UV → optical → NIR photometry** (11 bands, Swift-UV `uvw1` through 2MASS "
+                 "`Ks`, SNR ≥ 3, 0–30 d)" if full else "g/r/i photometry (SNR ≥ 3)")
+    lines = ["# AT2017GFO — Villar+2017-style two-component kilonova with WHISPER"
+             + (" (full UVOIR)" if full else ""), "",
              "Real-data application: the redback `two_component_kilonova` model with "
              "**κ_blue = 0.5 cm²/g fixed**, redshift fixed (z = 0.00984), **κ_red and both "
-             "temperature floors free**, fit to the AT2017GFO g/r/i photometry (SNR ≥ 3) in "
+             f"temperature floors free**, fit to the AT2017GFO {data_desc} in "
              "apparent-magnitude space. The likelihood-based and neural methods also fit the "
              "**Villar+17 extra-scatter term σ** (added in quadrature to the reported errors):", "",
              "$$\\ln\\mathcal{L} = -\\tfrac{1}{2}\\sum_i\\left[\\frac{(O_i-M_i)^2}"
@@ -307,7 +326,7 @@ def _report(out, res, samplers, params, labels, ms):
               "- **Amortized inference.** Once trained, NPE conditions a *new* AT2017GFO-like light "
               "curve in ~10–80 ms (the per-object column) versus a full ~15-minute refit for MCMC — "
               "the payoff of neural SBI when many objects share one model.", ""]
-    fig_dir = "figures/at2017gfo_villar"
+    fig_dir = "figures/" + os.path.basename(out.rstrip("/"))   # at2017gfo_villar[_full]
     lines += ["## Figures", "",
               "### Posterior histograms", "",
               "Per-parameter marginal posteriors (rows) for every method (columns), each annotated "
@@ -330,6 +349,7 @@ def _report(out, res, samplers, params, labels, ms):
               "Parameter medians ± 68% CI across methods, each normalised to the Villar+2017 value "
               "where available (dashed line = Villar+17), and the end-to-end wall time per method.", "",
               f"![summary]({fig_dir}/villar_summary.png)", ""]
-    path = os.path.join(os.path.dirname(out.rstrip("/")), "..", "REPORT_at2017gfo_villar.md")
+    report_name = "REPORT_" + os.path.basename(out.rstrip("/")) + ".md"   # ..._villar[_full].md
+    path = os.path.join(os.path.dirname(out.rstrip("/")), "..", report_name)
     path = os.path.abspath(path)
     open(path, "w").write("\n".join(lines))

@@ -35,9 +35,17 @@ from whisper_labia.models.two_component_kilonova import two_component_kilonova_f
 from whisper_labia.priors import LogUniform, Prior, Uniform
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA = os.path.join(HERE, "tests", "data", "at2017gfo.csv")
-OUT = os.path.join(HERE, "docs", "figures", "at2017gfo_villar")
-BANDS = ["g", "r", "i"]
+# VILLAR_FULL=1 -> full UV-optical-NIR dataset (11 bands spanning Swift-UV to 2MASS-Ks); default is the
+# g/r/i-only reduction. TMAX_DAYS restricts the light curve to the early kilonova (0-30 d rest of decay).
+FULL = os.environ.get("VILLAR_FULL") == "1"
+DATA = os.path.join(HERE, "tests", "data",
+                    "at2017gfo_full.csv" if FULL else "at2017gfo.csv")
+OUT = os.path.join(HERE, "docs", "figures",
+                   "at2017gfo_villar_full" if FULL else "at2017gfo_villar")
+BANDS = (["uvot::uvw1", "B", "g", "V", "r", "i", "z", "Y", "J", "H", "Ks"]  # UV -> optical -> NIR
+         if FULL else ["g", "r", "i"])
+EXPLOSION = 57982.529 if FULL else 57982.0     # GW170817 merger (MJD); g/r/i run used 57982.0
+TMAX_DAYS = 30.0
 Z_AT = 0.00984                      # GW170817 host (NGC 4993)
 KAPPA_BLUE = 0.5                    # cm^2/g, fixed (Villar+17 blue component)
 MODEL = "villar17_kilonova"
@@ -86,9 +94,11 @@ PRIOR_ABC = Prior(dict(PRIOR_PHYS))                                  # distance-
 
 
 def setup():
-    lc = wp.load_lightcurve(DATA, explosion_date=57982.0, min_snr=3, bands=BANDS,
+    lc = wp.load_lightcurve(DATA, explosion_date=EXPLOSION, min_snr=3, bands=BANDS,
                             redshift=Z_AT)
-    return lc
+    tp = np.asarray(lc.time, float)                       # phase (days since explosion)
+    keep = (tp >= 0.0) & (tp <= TMAX_DAYS)                # early kilonova window
+    return lc[keep] if not keep.all() else lc
 
 
 # method -> (label, fn, prior, kwargs). All magnitude-space; neural = GPU + stacked input.
@@ -96,8 +106,11 @@ NEURAL = dict(space="magnitude", scatter_param="sigma", x_format="stacked", devi
               seed=0, training_batch_size=1000, num_workers=24)
 SAMPLERS = {
     "mcmc": ("MCMC", wp.fit_MCMC, PRIOR_FULL,
-             dict(nsteps=12000, burnin=4000, thin=4, nwalkers=40, space="magnitude",
-                  likelihood="gaussian_scatter", n_jobs=48, seed=0)),   # long enough to converge
+             # 11-band UVOIR data is ~2x costlier per predict but far more constraining, so fewer steps
+             # converge; g/r/i keeps the longer chain. Both sized past 50*tau for converged=True.
+             dict(nsteps=8000 if FULL else 12000, burnin=2500 if FULL else 4000, thin=4,
+                  nwalkers=32 if FULL else 40, space="magnitude",
+                  likelihood="gaussian_scatter", n_jobs=48, seed=0)),
     "abc": ("ABC", wp.fit_ABC, PRIOR_ABC,
             dict(n_simulations=60_000, quantile=0.005, space="magnitude", n_jobs=48, seed=0)),
     "abc_smc": ("ABC-SMC", wp.fit_ABC_SMC, PRIOR_ABC,
