@@ -25,6 +25,8 @@ BAND_COL = {"g": "#2ca02c", "r": "#d62728", "i": "#8c564b"}
 COLORS = dict(zip(["mcmc", "abc", "abc_smc", "npe_mdn", "npe_nsf", "snpe5_nsf", "snpe5_tcn"],
                   ["#08306b", "#a50026", "#006d2c", "#c51b7d", "#01665e", "#4d004b", "#00441b"]))
 LOGPAR = {"mej_1", "mej_2", "temperature_floor_1", "temperature_floor_2", "sigma"}
+SHORT = {"mcmc": "MCMC", "abc": "ABC", "abc_smc": "ABC-SMC", "npe_mdn": "NPE-MDN",
+         "npe_nsf": "NPE-NSF", "snpe5_nsf": "SNPE-5r", "snpe5_tcn": "SNPE-5r+TCN"}
 VILLAR17 = {  # Villar et al. 2017 (ApJL 851, L21) Table 2, "2-Comp" fit (kappa_blue=0.5 fixed) —
     # blue = low-opacity component 1, red = high-opacity component 2 (matches this setup exactly).
     "mej_1": 0.023, "vej_1": 0.256, "temperature_floor_1": 3983,
@@ -58,35 +60,65 @@ def plot(out, samplers, params, labels, bands):
     allp = params + ["sigma"]
 
     # ---------------- histograms: rows = parameters, columns = methods, annotated median ± CI ----
-    fig, ax = plt.subplots(len(allp), len(ms), figsize=(2.9 * len(ms), 2.0 * len(allp)),
+    from matplotlib.ticker import LogLocator, MaxNLocator
+    tfloor = {"temperature_floor_1", "temperature_floor_2"}
+
+    # ONE shared x-range per physical variable (union of the methods' posterior bulk), with matching
+    # bin edges, so every row is directly comparable across methods. Temperature floors are on a log
+    # axis and clipped to the physical LogUniform(100, 6000) prior range (neural tails can leak past it).
+    xr, xbins = {}, {}
+    for p in allp:
+        pooled = np.concatenate([npz[m]["samples"][:, list(npz[m]["params"]).index(p)]
+                                 for m in ms if p in list(npz[m]["params"])])
+        if p in tfloor:
+            lo = max(np.percentile(pooled[pooled > 0], 1.0), 90.0)
+            hi = min(np.percentile(pooled[pooled > 0], 99.0), 6200.0)
+            xr[p] = (lo * 0.85, hi * 1.15)
+            xbins[p] = np.logspace(np.log10(xr[p][0]), np.log10(xr[p][1]), 37)
+        else:
+            lo, hi = np.percentile(pooled, [1.0, 99.0])
+            pad = (hi - lo) * 0.04 or max(abs(hi) * 0.02, 1e-3)
+            xr[p] = (lo - pad, hi + pad)
+            xbins[p] = np.linspace(xr[p][0], xr[p][1], 37)
+
+    fig, ax = plt.subplots(len(allp), len(ms), figsize=(3.5 * len(ms), 2.4 * len(allp)),
                            squeeze=False)
     for j, m in enumerate(ms):
         d = npz[m]
         cols = {p: d["samples"][:, i] for i, p in enumerate(list(d["params"]))}
         for i, p in enumerate(allp):
             a = ax[i][j]
+            islog = p in tfloor
+            if islog:
+                a.set_xscale("log")
+            a.set_xlim(*xr[p])
+            a.set_yticks([])
             if p not in cols:
-                a.text(0.5, 0.5, "—", transform=a.transAxes, ha="center", va="center",
-                       fontsize=16, color="0.6")
-                a.set_xticks([]); a.set_yticks([])
+                a.text(0.5, 0.5, "not fitted", transform=a.transAxes, ha="center", va="center",
+                       fontsize=13, color="0.55", style="italic")
             else:
                 x = cols[p]
-                a.hist(x, bins=36, density=True, color=COLORS[m], alpha=0.6, histtype="stepfilled")
+                a.hist(x, bins=xbins[p], density=True, color=COLORS[m], alpha=0.68,
+                       histtype="stepfilled")
                 lo, med, hi = np.percentile(x, [16, 50, 84])
-                for v, ls in ((med, "-"), (lo, ":"), (hi, ":")):
-                    a.axvline(v, color="k", lw=1.0, ls=ls)
-                a.set_title(rf"${_fmt(med, lo, hi)}$", fontsize=9, pad=2)
-                a.set_yticks([])
-                if p in ("temperature_floor_1", "temperature_floor_2"):
-                    a.set_xscale("log")
+                a.axvline(med, color="k", lw=1.6)
+                a.axvline(lo, color="k", lw=1.1, ls=":")
+                a.axvline(hi, color="k", lw=1.1, ls=":")
+                a.set_title(rf"${_fmt(med, lo, hi)}$", fontsize=12.5, pad=4)
+            if islog:                                # a few clean decade ticks, no minor clutter
+                a.xaxis.set_major_locator(LogLocator(numticks=5))
+                a.xaxis.set_minor_locator(LogLocator(subs="auto", numticks=12))
+            else:                                    # more ticks, edges pruned so neighbours don't touch
+                a.xaxis.set_major_locator(MaxNLocator(nbins=5, prune="both"))
+            a.tick_params(axis="x", labelsize=12.5, length=5)
             if i == 0:
-                a.annotate(samplers[m][0], xy=(0.5, 1.35), xycoords="axes fraction",
-                           ha="center", fontsize=11, weight="bold")
+                a.annotate(SHORT.get(m, samplers[m][0]), xy=(0.5, 1.46), xycoords="axes fraction",
+                           ha="center", fontsize=15, weight="bold")
             if j == 0:
-                a.set_ylabel(labels.get(p, p), fontsize=11)
-    fig.suptitle("AT2017GFO — two-component kilonova posteriors (median ± 68% CI)",
-                 y=1.005, weight="bold")
-    fig.tight_layout()
+                a.set_ylabel(labels.get(p, p), fontsize=18)
+    fig.suptitle("AT2017GFO — two-component kilonova posteriors (median ± 68% CI; shared x-range "
+                 "per variable)", y=1.003, weight="bold", fontsize=18)
+    fig.tight_layout(h_pad=2.8, w_pad=1.0)
     fig.savefig(os.path.join(out, "villar_hist.png"), dpi=140, bbox_inches="tight")
     plt.close(fig)
 
@@ -138,9 +170,7 @@ def plot(out, samplers, params, labels, bands):
     plt.close(fig)
 
     # ---------------- summary: medians vs methods + runtime ---------------------------------------
-    # short method tags so the runtime-bar labels never overflow into the left panel
-    SHORT = {"mcmc": "MCMC", "abc": "ABC", "abc_smc": "ABC-SMC", "npe_mdn": "NPE-MDN",
-             "npe_nsf": "NPE-NSF", "snpe5_nsf": "SNPE-5r", "snpe5_tcn": "SNPE-5r+TCN"}
+    # short method tags (module-level SHORT) keep the runtime-bar labels off the left panel
     fig = plt.figure(figsize=(15.5, 5.4))
     gs = fig.add_gridspec(1, 2, width_ratios=[1.7, 0.85], wspace=0.30)
     ax0 = fig.add_subplot(gs[0])
