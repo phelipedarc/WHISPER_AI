@@ -137,8 +137,11 @@ def plot(out, samplers, params, labels, bands):
     plt.close(fig)
 
     # ---------------- summary: medians vs methods + runtime ---------------------------------------
-    fig = plt.figure(figsize=(13.5, 4.4))
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.6, 0.8], wspace=0.28)
+    # short method tags so the runtime-bar labels never overflow into the left panel
+    SHORT = {"mcmc": "MCMC", "abc": "ABC", "abc_smc": "ABC-SMC", "npe_mdn": "NPE-MDN",
+             "npe_nsf": "NPE-NSF", "snpe5_nsf": "SNPE-5r", "snpe5_tcn": "SNPE-5r+TCN"}
+    fig = plt.figure(figsize=(15.5, 5.4))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.7, 0.85], wspace=0.30)
     ax0 = fig.add_subplot(gs[0])
     show6 = ["mej_1", "vej_1", "mej_2", "vej_2", "kappa_2", "sigma"]
     xs = np.arange(len(show6))
@@ -151,22 +154,28 @@ def plot(out, samplers, params, labels, bands):
         val = [m0 / n if np.isfinite(n) else m0 for m0, n in zip(med, norm)]
         e_lo = [l / n if np.isfinite(n) else l for l, n in zip(lo, norm)]
         e_hi = [h / n if np.isfinite(n) else h for h, n in zip(hi, norm)]
-        ax0.errorbar(xs + 0.09 * (k - len(ms) / 2), val, yerr=[e_lo, e_hi], fmt="o", ms=4,
-                     color=COLORS[m], label=samplers[m][0], lw=1.2)
+        ax0.errorbar(xs + 0.1 * (k - len(ms) / 2), val, yerr=[e_lo, e_hi], fmt="o", ms=4,
+                     color=COLORS[m], label=SHORT.get(m, samplers[m][0]), lw=1.2, capsize=2)
     ax0.axhline(1.0, color="0.4", ls="--", lw=1)
     ax0.set_xticks(xs)
     ax0.set_xticklabels([labels.get(p, p) + ("\n(/V17)" if p in VILLAR17 else "") for p in show6])
     ax0.set_ylabel("median (÷ Villar+17 where available)")
     ax0.set_title("Parameter medians ± 68% CI across methods")
-    ax0.legend(fontsize=7.5, frameon=False, ncol=2)
+    # legend spans the bottom of the whole figure -> never overlaps either panel's data
+    ax0.legend(loc="upper center", bbox_to_anchor=(0.72, -0.16), ncol=7, fontsize=8.5,
+               frameon=False, handletextpad=0.3, columnspacing=1.1)
 
     ax1 = fig.add_subplot(gs[1])
     rt = [res[m]["wall_s"] for m in ms]
-    ax1.barh([samplers[m][0] for m in ms], rt, color=[COLORS[m] for m in ms])
+    y = np.arange(len(ms))
+    ax1.barh(y, rt, color=[COLORS[m] for m in ms])
+    ax1.set_yticks([])                               # no y-tick labels -> nothing can overflow left
     ax1.set_xlabel("wall [s]"); ax1.set_xscale("log"); ax1.set_title("End-to-end fit time")
-    for y, v in enumerate(rt):
-        ax1.text(v, y, f" {v:.0f}s", va="center", fontsize=8)
-    fig.suptitle("AT2017GFO Villar+17 kilonova — summary", y=1.04, weight="bold")
+    ax1.set_xlim(min(rt) * 0.6, max(rt) * 9)         # headroom for the name+time label past each bar
+    for yi, m in zip(y, ms):                          # name + runtime together, just past the bar end
+        ax1.text(rt[yi] * 1.18, yi, f"{SHORT.get(m, m)} · {rt[yi]:.0f}s", va="center", ha="left",
+                 fontsize=8.5)
+    fig.suptitle("AT2017GFO Villar+17 kilonova — summary", y=1.0, weight="bold")
     fig.savefig(os.path.join(out, "villar_summary.png"), dpi=140, bbox_inches="tight")
     plt.close(fig)
 
