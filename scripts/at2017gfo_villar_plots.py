@@ -144,10 +144,17 @@ def plot(out, samplers, params, labels, bands):
     plt.close("all")
 
     # ---------------- PPC: one panel per method, 3-band model bands + data -----------------------
-    fig, ax = plt.subplots(len(ms), 1, figsize=(8.6, 2.4 * len(ms)), squeeze=False, sharex=True)
+    # sharey=True -> ONE common magnitude axis for every panel; its range is set from the data (+the
+    # median model curves) so the σ-inflated 95% band tails simply clip at the edges instead of
+    # blowing the scale up to 30-40 mag and squashing the informative region.
+    fig, ax = plt.subplots(len(ms), 1, figsize=(8.6, 2.4 * len(ms)), squeeze=False,
+                           sharex=True, sharey=True)
     ref = npz[ms[0]]
     t, band = ref["time"], ref["band"].astype(str)
     mag, err = ref["mag"], ref["mag_err"]
+    med_all = np.concatenate([npz[m][f"curve_{b}"][1] for m in ms for b in bands])   # median curves
+    y_bright = min(float(np.min(mag - err)), float(np.percentile(med_all, 1))) - 0.5
+    y_faint = max(float(np.max(mag + err)), float(np.percentile(med_all, 99))) + 0.5
     for i, m in enumerate(ms):
         a = ax[i][0]; d = npz[m]
         for b in bands:
@@ -158,7 +165,7 @@ def plot(out, samplers, params, labels, bands):
             a.errorbar(t[sel], mag[sel], yerr=err[sel], fmt="o", ms=2.6, color=BAND_COL[b],
                        alpha=0.75, lw=0.7)
         j = res[m]["ppc"]
-        a.invert_yaxis()
+        a.set_ylim(y_faint, y_bright)             # inverted (faint at bottom); shared across panels
         a.set_ylabel(samplers[m][0], fontsize=10)
         a.text(0.99, 0.05, f"χ²/dof={j['chi2_reported']:.1f}  (+σ: {j['chi2_scatter']:.2f})  "
                f"cov95={j['cov95']:.2f}", transform=a.transAxes, ha="right", va="bottom", fontsize=9)
