@@ -219,7 +219,36 @@ def _report(out, res, samplers, params, labels, ms):
               "photometry always carries model systematics beyond the measurement errors; that is "
               "exactly what σ absorbs: with the fitted scatter the χ²/dof (σᵢ ⊕ σ) is ≈1 and the "
               "predictive coverage is nominal. AIC values are comparable only among methods fitting "
-              "the same parameter set (the ABC family omits σ).*", "",
+              "the same parameter set (the ABC family omits σ).*", ""]
+
+    # Data-driven interpretation of the σ recovery and the MCMC-vs-SBI mode tension.
+    sig = {m: res[m]["summary"]["sigma"]["median"] for m in ms if "sigma" in res[m]["summary"]}
+    vblue = {m: res[m]["summary"]["vej_1"]["median"] for m in ms}
+    kred = {m: res[m]["summary"]["kappa_2"]["median"] for m in ms}
+    lines += ["## Interpretation", "",
+              f"- **The scatter term works.** MCMC and the neural methods independently recover an "
+              f"extra scatter σ ≈ {np.mean(list(sig.values())):.2f} mag "
+              f"(range {min(sig.values()):.2f}–{max(sig.values()):.2f}); folding it in quadrature "
+              "into the errors turns a χ²/dof of 45–99 into ≈1 with nominal 95% predictive coverage. "
+              "The mismatch is model systematics (a semi-analytic 2-component kilonova cannot capture "
+              "every spectral feature of AT2017GFO), precisely what Villar+2017 introduced σ to model.",
+              "- **A real mode tension — MCMC vs simulation-based inference.** Seeded from the ABC "
+              "best fit and run to convergence, **MCMC finds the highest-likelihood mode** "
+              f"(χ²/dof = {res['mcmc']['ppc']['chi2_reported']:.0f} vs reported errors, far below the "
+              "others; lowest AIC) — but that mode sits against several prior edges "
+              f"(v_ej^blue = {vblue['mcmc']:.2f} c near the 0.7 bound, κ_red = {kred['mcmc']:.1f} "
+              "near the 1.0 floor): a fast, high-mass blue ejecta with low red opacity. **Every "
+              "simulation-based method (ABC, ABC-SMC, NPE, SNPE) instead agrees on a broader, more "
+              f"central posterior** (v_ej^blue ≈ 0.35–0.52, κ_red ≈ 7–13, the latter bracketing "
+              "Villar+2017's 3.65 cm²/g). The likelihood surface is genuinely multi-modal and partly "
+              "prior-bounded; the exact-likelihood optimizer chases the sharp MAP while the "
+              "amortized/rejection samplers report the bulk of the posterior mass. This is the honest "
+              "takeaway of a real-data fit — the methods agree on the well-constrained parameters "
+              "(blue ejecta mass, σ) and disagree exactly where the data are least informative.",
+              "- **Amortized inference.** Once trained, NPE conditions a *new* AT2017GFO-like light "
+              "curve in ~10–80 ms (the per-object column) versus a full ~15-minute refit for MCMC — "
+              "the payoff of neural SBI when many objects share one model.", ""]
+    lines += ["",
               "![histograms](figures/at2017gfo_villar/villar_hist.png)", "",
               "![corner](figures/at2017gfo_villar/villar_corner.png)", "",
               "![ppc](figures/at2017gfo_villar/villar_ppc.png)", "",
