@@ -60,10 +60,33 @@ PRIOR = Prior({
 _AB_ZP_JY = 3631.0
 _MIN_TIME_DAY = 1e-3          # redback kilonova flux is undefined at t<=0
 _FAINT_MAG = 99.0             # stand-in for NaN/inf (non-emitting) -> ~0 flux, finite
-# WHISPER effective band -> redback LSST filter
+# WHISPER effective band -> redback LSST filter (bare optical letters; keeps grizy on one system)
 _LSST = {"u": "lsstu", "g": "lsstg", "r": "lsstr", "i": "lssti", "z": "lsstz", "y": "lssty"}
 
 _redback_fn = None
+_sncosmo_map = None              # {friendly band name -> sncosmo bandpass name}, from redback's table
+
+
+def _redback_sncosmo_map():
+    """Lazily load redback's ``friendly band -> sncosmo bandpass`` map (its ``tables/filters.csv``).
+
+    redback computes magnitudes through **sncosmo**, which needs the registered bandpass name
+    (``bessellb``, ``2massj``, ``uvot::uvw1`` …), not the friendly label (``B``, ``J`` …). This map lets
+    real UV/optical/NIR photometry (``H``, ``J``, ``Ks``, ``U``, ``uvot::uvw1`` …) resolve to the right
+    bandpass with no hand-tuning."""
+    global _sncosmo_map
+    if _sncosmo_map is None:
+        try:
+            import os
+
+            import pandas as pd
+            import redback
+            tbl = os.path.join(os.path.dirname(redback.__file__), "tables", "filters.csv")
+            d = pd.read_csv(tbl)
+            _sncosmo_map = dict(zip(d["bands"].astype(str), d["sncosmo_name"].astype(str)))
+        except Exception:            # redback absent -> non-LSST bands fall through to the resolver
+            _sncosmo_map = {}
+    return _sncosmo_map
 
 
 def _get_redback_model():
@@ -86,20 +109,36 @@ def _get_redback_model():
 
 
 def _redback_band(band):
-    """Map a WHISPER band label to a redback LSST filter name."""
-    s = str(band).strip().lower()
+    """Map a WHISPER band label to a redback filter name.
+
+    Bare optical letters (``g r i z y u``) map to the LSST system for consistency with the g/r/i
+    analysis; any name redback already knows — NIR (``J H K Ks 2massj`` …), Swift UVOT
+    (``uvot::uvw1`` …), HST, Bessell, SDSS/PS1 — passes straight through; otherwise the optical
+    band-resolver provides a last-resort LSST fallback.
+    """
+    raw = str(band).strip()
+    s = raw.lower()
+    # bare LOWERCASE grizy -> LSST (SDSS/LSST-like optical, one consistent system). Case matters:
+    # UPPERCASE Johnson-Cousins letters (U B V R I) route to their Bessell bandpasses below.
+    if raw in _LSST:
+        return _LSST[raw]
     if s in _LSST.values():
         return s
-    if s in _LSST:
-        return _LSST[s]
-    from ..io.bands import resolve_band
+    snc = _redback_sncosmo_map()                # NIR / UVOT / HST / Bessell / SDSS -> sncosmo bandpass
+    for cand in (raw, raw.capitalize()):
+        if cand in snc:
+            return snc[cand]
+    if raw in set(snc.values()):                # already a valid sncosmo bandpass name
+        return raw
+    from ..io.bands import resolve_band          # last resort: resolve an optical group -> LSST
     group = (resolve_band(band, svo_fallback=False, warn=False).get("group") or "")
     key = group.replace("-band", "").strip().lower()
     if key in _LSST:
         return _LSST[key]
     raise ValueError(
-        f"two_component_kilonova: band {band!r} has no redback LSST mapping "
-        f"(supported optical bands: {sorted(_LSST)})."
+        f"two_component_kilonova: band {band!r} is not a recognised redback filter and has no "
+        f"optical LSST mapping (bare optical bands {sorted(_LSST)} map to LSST; NIR/UV/HST names "
+        "must match redback's filters table)."
     )
 
 

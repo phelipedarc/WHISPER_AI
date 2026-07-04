@@ -30,8 +30,17 @@ def test_kilonova_band_mapping():
     assert tck._redback_band("g") == "lsstg"
     assert tck._redback_band("lsstr") == "lsstr"      # already a redback name
     assert tck._redback_band("i-band") == "lssti"     # WHISPER effective-band label
-    with pytest.raises(ValueError, match="no redback LSST mapping"):
+    with pytest.raises(ValueError, match="not a recognised redback filter"):
         tck._redback_band("not_a_band_xyz")
+
+
+def test_kilonova_uv_nir_band_mapping():
+    """UV/NIR bands resolve to redback's sncosmo bandpasses (needs redback's filters table)."""
+    pytest.importorskip("redback")
+    for band, sncosmo in [("H", "2massh"), ("J", "2massj"), ("Ks", "2massks"), ("K", "2massks"),
+                          ("B", "bessellb"), ("V", "bessellv"), ("U", "bessellux"),
+                          ("uvot::uvw1", "uvot::uvw1")]:
+        assert tck._redback_band(band) == sncosmo, band
 
 
 def test_kilonova_requires_bands():

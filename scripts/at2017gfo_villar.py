@@ -68,10 +68,16 @@ def _register():
 
 
 # 7 free physical parameters; sigma = Villar+17 extra scatter (magnitudes), fit by MCMC + neural SBI.
+# Ejecta velocity prior is restricted to the PHYSICAL kilonova range 0.05-0.3 c: the wide 0.01-0.7 c
+# prior let the exact-likelihood MAP rail to an unphysical 0.7 c blue component (confirmed as a genuine
+# but unphysical global likelihood maximum by a from-scratch global optimizer — the g/r/i-only data +
+# semi-analytic model prefer a fast, hot blue component that chases the rapid optical decline). Villar+17
+# find v_blue = 0.256 c, v_red = 0.149 c, both inside this range.
+V_PHYS = Uniform(0.05, 0.3)
 PRIOR_PHYS = {
-    "mej_1": Uniform(1e-4, 0.1), "vej_1": Uniform(0.01, 0.7),
+    "mej_1": Uniform(1e-4, 0.1), "vej_1": V_PHYS,
     "temperature_floor_1": LogUniform(100.0, 6000.0),
-    "mej_2": Uniform(1e-4, 0.1), "vej_2": Uniform(0.01, 0.7),
+    "mej_2": Uniform(1e-4, 0.1), "vej_2": V_PHYS,
     "kappa_2": Uniform(1.0, 30.0),
     "temperature_floor_2": LogUniform(100.0, 6000.0),
 }
@@ -90,8 +96,8 @@ NEURAL = dict(space="magnitude", scatter_param="sigma", x_format="stacked", devi
               seed=0, training_batch_size=1000, num_workers=24)
 SAMPLERS = {
     "mcmc": ("MCMC", wp.fit_MCMC, PRIOR_FULL,
-             dict(nsteps=4000, burnin=1500, thin=4, nwalkers=32, space="magnitude",
-                  likelihood="gaussian_scatter", n_jobs=32, seed=0)),
+             dict(nsteps=12000, burnin=4000, thin=4, nwalkers=40, space="magnitude",
+                  likelihood="gaussian_scatter", n_jobs=48, seed=0)),   # long enough to converge
     "abc": ("ABC", wp.fit_ABC, PRIOR_ABC,
             dict(n_simulations=60_000, quantile=0.005, space="magnitude", n_jobs=48, seed=0)),
     "abc_smc": ("ABC-SMC", wp.fit_ABC_SMC, PRIOR_ABC,
