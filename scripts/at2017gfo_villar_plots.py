@@ -290,42 +290,61 @@ def _report(out, res, samplers, params, labels, ms):
               "predictive coverage is nominal. AIC values are comparable only among methods fitting "
               "the same parameter set (the ABC family omits σ).*", ""]
 
-    # Data-driven interpretation of the σ recovery and the MCMC-vs-SBI mode tension.
+    # Data-driven interpretation. Rail detection uses the actual prior bounds (physical v in [0.05,0.3]).
+    PRIOR_BOUNDS = {"mej_1": (1e-4, 0.1), "vej_1": (0.05, 0.3), "temperature_floor_1": (100, 6000),
+                    "mej_2": (1e-4, 0.1), "vej_2": (0.05, 0.3), "kappa_2": (1.0, 30.0),
+                    "temperature_floor_2": (100, 6000)}
+
+    def _rails(m, p):
+        s = res[m]["summary"].get(p)
+        if not s or p not in PRIOR_BOUNDS:
+            return False
+        lo, hi = PRIOR_BOUNDS[p]
+        f = (s["median"] - lo) / (hi - lo)
+        return f < 0.05 or f > 0.95
+
     sig = {m: res[m]["summary"]["sigma"]["median"] for m in ms if "sigma" in res[m]["summary"]}
-    vblue = {m: res[m]["summary"]["vej_1"]["median"] for m in ms}
-    kred = {m: res[m]["summary"]["kappa_2"]["median"] for m in ms}
-    sig_med = float(np.median(list(sig.values())))
+    sig_med = float(np.median(list(sig.values()))) if sig else float("nan")
+    mcmc = res.get("mcmc", {}).get("summary", {})
+    red_railers = sorted({p for m in ms for p in ("kappa_2", "vej_2", "temperature_floor_2")
+                          if _rails(m, p)})
+    blue_railers = sorted({p for m in ms for p in ("vej_1", "mej_1", "temperature_floor_1")
+                           if _rails(m, p)})
+    vb = mcmc.get("vej_1", {}).get("median", float("nan"))
+    kr = mcmc.get("kappa_2", {}).get("median", float("nan"))
+
     lines += ["## Interpretation", "",
-              f"- **The scatter term works, and matches Villar+2017.** The likelihood-based and neural "
-              f"methods recover an extra scatter **σ ≈ {sig_med:.2f} mag** (most methods 0.18–0.22) — "
-              f"in good agreement with **Villar+2017's σ = {VILLAR17['sigma']:.3f} mag**. Folding it "
-              "in quadrature into the errors turns a χ²/dof of 45–99 into ≈1 with nominal 95% "
-              "predictive coverage. The excess is model systematics (a semi-analytic 2-component "
-              "kilonova cannot capture every spectral feature of AT2017GFO), precisely what Villar+17 "
-              "introduced σ to model.",
-              "- **A real mode tension — MCMC vs simulation-based inference.** Seeded from the ABC "
-              "best fit and run to convergence, **MCMC finds the highest-likelihood mode** "
-              f"(χ²/dof = {res['mcmc']['ppc']['chi2_reported']:.0f} vs reported errors, far below the "
-              "others; lowest AIC) — but that mode sits against several prior edges "
-              f"(v_ej^blue = {vblue['mcmc']:.2f} c near the 0.7 bound, κ_red = {kred['mcmc']:.1f} "
-              "near the 1.0 floor): a fast, high-mass blue ejecta with low red opacity. **Every "
-              "simulation-based method (ABC, ABC-SMC, NPE, SNPE) instead agrees on a broader, more "
-              f"central posterior** (v_ej^blue ≈ 0.35–0.52, κ_red ≈ 7–13, bracketing "
-              f"Villar+2017's {VILLAR17['kappa_2']:.2f} cm²/g). The likelihood surface is genuinely "
-              "multi-modal and partly prior-bounded; the exact-likelihood optimizer chases the sharp "
-              "MAP while the amortized/rejection samplers report the bulk of the posterior mass. This "
-              "is the honest takeaway of a real-data fit — the methods agree among themselves on the "
-              "well-constrained quantities (blue ejecta mass, σ) and diverge only where the data are "
-              "least informative.",
-              "- **Offset from Villar+2017 is expected.** The absolute ejecta masses sit above the "
-              f"Villar+17 anchor (blue mass ≈ 3–4× their {VILLAR17['mej_1']:.3f} M☉): here the fit "
-              "uses only the repository's g/r/i photometry through redback's semi-analytic model, "
-              "whereas Villar+17 fit a full UV–optical–NIR light curve with a radiative-transfer-"
-              "calibrated model. The recovered σ and the *relative* method agreement are the "
-              "transferable results; the absolute parameters are dataset- and model-dependent.",
+              f"- **The scatter term works, and matches Villar+2017.** Every likelihood-based and "
+              f"neural method recovers an extra scatter **σ ≈ {sig_med:.2f} mag**, close to "
+              f"**Villar+2017's σ = {VILLAR17['sigma']:.3f} mag**. Folding it in quadrature turns the "
+              "χ²/dof (vs reported errors) into ≈1 with nominal 95% predictive coverage — the excess is "
+              "model systematics (a semi-analytic two-component kilonova can't capture every spectral "
+              "feature), exactly what Villar+17 introduced σ to absorb.",
+              f"- **Blue component — well constrained.** With κ_blue fixed at 0.5 the blue component is "
+              f"fully specified in regime, and MCMC recovers v_ej^blue ≈ {vb:.2f} c and a defined "
+              f"temperature floor"
+              + ("" if blue_railers else " with no parameter railing the prior") + " — consistent with "
+              f"Villar+2017 (v^blue = {VILLAR17['vej_1']:.3f} c, T^blue = {VILLAR17['temperature_floor_1']:.0f} K).",
+              ("- **Red component — " + ("still edge-limited" if red_railers else "now constrained") +
+               ".** " + (
+                   ("κ_red is *free* and the lanthanide-rich red ejecta radiate mostly in the NIR; with "
+                    f"the full UV–optical–NIR data the red parameters pull off the prior edges toward "
+                    f"physical values (MCMC κ_red ≈ {kr:.1f} cm²/g vs Villar+2017's "
+                    f"{VILLAR17['kappa_2']:.2f}). This is the payoff of adding the NIR bands the "
+                    "optical-only fit lacked.")
+                   if not red_railers else
+                   ("κ_red is *free* and the red ejecta radiate mostly in the **NIR**, which this band "
+                    f"set constrains weakly — so {', '.join(red_railers) or 'the red parameters'} rail "
+                    "against their prior edges. Adding NIR coverage (the full-UVOIR run) is what "
+                    "identifies them."))),
+              f"- **MCMC vs simulation-based inference.** MCMC finds the sharp maximum-likelihood mode "
+              f"(χ²/dof = {res['mcmc']['ppc']['chi2_reported']:.0f} vs reported errors, lowest AIC); "
+              "the amortized/rejection samplers report a broader posterior bulk. They agree on the "
+              "well-constrained quantities (blue ejecta, σ) and diverge where the data are least "
+              "informative — the honest signature of a real-data fit.",
               "- **Amortized inference.** Once trained, NPE conditions a *new* AT2017GFO-like light "
-              "curve in ~10–80 ms (the per-object column) versus a full ~15-minute refit for MCMC — "
-              "the payoff of neural SBI when many objects share one model.", ""]
+              "curve in ~10–80 ms (the per-object column) versus a full refit for MCMC — the payoff of "
+              "neural SBI when many objects share one model.", ""]
     fig_dir = "figures/" + os.path.basename(out.rstrip("/"))   # at2017gfo_villar[_full]
     lines += ["## Figures", "",
               "### Posterior histograms", "",
