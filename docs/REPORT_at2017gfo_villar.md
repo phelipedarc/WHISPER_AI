@@ -19,7 +19,7 @@ $$\ln\mathcal{L} = -\tfrac{1}{2}\sum_i\left[\frac{(O_i-M_i)^2}{\sigma_i^2+\sigma
 | T_{floor}^{red} | 361.8 [+6.2e+02 −2.1e+02] | 1477 [+2.8e+03 −1.2e+03] | 1185 [+3.1e+03 −9.6e+02] | 2183 [+2.2e+03 −1.5e+03] | 1349 [+3.6e+03 −1.2e+03] | 737.6 [+3.6e+03 −5.7e+02] | 2268 [+2.6e+03 −2e+03] |
 | \sigma | 0.2157 [+0.013 −0.012] | — | — | 0.2115 [+0.85 −0.14] | 0.1772 [+0.74 −0.15] | 0.1962 [+0.64 −0.17] | 0.582 [+0.3 −0.32] |
 
-*Reference — **Villar et al. 2017 (ApJL 851 L21), Table 2, 2-component fit** (κ_blue = 0.5 fixed, matching this setup): M_ej^blue = 0.023 M☉, v^blue = 0.256 c, T^blue = 3983 K, M_ej^red = 0.050 M☉, v^red = 0.149 c, κ_red = 3.65 cm²/g, T^red = 1151 K, σ = 0.256 mag (WAIC = −1030). Villar+17 fit a much larger UV–optical–NIR dataset with a radiative-transfer-calibrated model, so the absolute values are a literature anchor, not ground truth. Shown as red dashed lines in the histograms.*
+*Reference — **Villar et al. 2017 (ApJL 851 L21), Table 2, 2-component fit** (κ_blue = 0.5 fixed, matching this setup): M_ej^blue = 0.023 M☉, v^blue = 0.256 c, T^blue = 3983 K, M_ej^red = 0.050 M☉, v^red = 0.149 c, κ_red = 3.65 cm²/g, T^red = 1151 K, σ = 0.256 mag (WAIC = −1030). Villar+17 fit a much larger UV–optical–NIR dataset with a radiative-transfer-calibrated model, so the absolute values are a literature anchor, not ground truth. The medians ÷ Villar+17 are compared in the summary figure below.*
 
 ## Goodness-of-fit & cost
 

@@ -75,8 +75,6 @@ def plot(out, samplers, params, labels, bands):
                 lo, med, hi = np.percentile(x, [16, 50, 84])
                 for v, ls in ((med, "-"), (lo, ":"), (hi, ":")):
                     a.axvline(v, color="k", lw=1.0, ls=ls)
-                if p in VILLAR17:
-                    a.axvline(VILLAR17[p], color="#d62728", lw=1.4, ls="--", alpha=0.8)
                 a.set_title(rf"${_fmt(med, lo, hi)}$", fontsize=9, pad=2)
                 a.set_yticks([])
                 if p in ("temperature_floor_1", "temperature_floor_2"):
@@ -86,8 +84,8 @@ def plot(out, samplers, params, labels, bands):
                            ha="center", fontsize=11, weight="bold")
             if j == 0:
                 a.set_ylabel(labels.get(p, p), fontsize=11)
-    fig.suptitle("AT2017GFO — Villar+17 kilonova posteriors (median ± 68% CI; red dashed = "
-                 "Villar+17 values)", y=1.005, weight="bold")
+    fig.suptitle("AT2017GFO — two-component kilonova posteriors (median ± 68% CI)",
+                 y=1.005, weight="bold")
     fig.tight_layout()
     fig.savefig(os.path.join(out, "villar_hist.png"), dpi=140, bbox_inches="tight")
     plt.close(fig)
@@ -217,7 +215,8 @@ def _report(out, res, samplers, params, labels, ms):
               "T^blue = 3983 K, M_ej^red = 0.050 M☉, v^red = 0.149 c, κ_red = 3.65 cm²/g, "
               "T^red = 1151 K, σ = 0.256 mag (WAIC = −1030). Villar+17 fit a much larger UV–optical–NIR "
               "dataset with a radiative-transfer-calibrated model, so the absolute values are a "
-              "literature anchor, not ground truth. Shown as red dashed lines in the histograms.*", "",
+              "literature anchor, not ground truth. The medians ÷ Villar+17 are compared in the "
+              "summary figure below.*", "",
               "## Goodness-of-fit & cost", "",
               "| method | χ²/dof (reported σᵢ) | χ²/dof (σᵢ ⊕ σ) | PPC cov95 | wall [s] "
               "| per-object [s] | AIC |",
