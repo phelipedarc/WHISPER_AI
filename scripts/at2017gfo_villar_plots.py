@@ -302,24 +302,26 @@ def _report(out, res, samplers, params, labels, ms):
               "predictive coverage is nominal. AIC values are comparable only among methods fitting "
               "the same parameter set (the ABC family omits σ).*", ""]
 
-    # Data-driven interpretation. Rail detection uses the actual prior bounds (physical v in [0.05,0.3]).
+    # Data-driven interpretation. Rail detection: the posterior piles against a bound — judged by
+    # proximity to the bound VALUE (not fraction of the prior range, which is misleading for wide
+    # priors like κ∈[1,30] where κ=2 is a genuine constraint), and keyed on the reference exact
+    # method (MCMC) rather than any single broad neural posterior.
     PRIOR_BOUNDS = {"mej_1": (1e-4, 0.1), "vej_1": (0.05, 0.3), "temperature_floor_1": (100, 6000),
                     "mej_2": (1e-4, 0.1), "vej_2": (0.05, 0.3), "kappa_2": (1.0, 30.0),
                     "temperature_floor_2": (100, 6000)}
+    mcmc = res.get("mcmc", {}).get("summary", {})
 
-    def _rails(m, p):
-        s = res[m]["summary"].get(p)
+    def _rails(p, summ=None):
+        summ = summ if summ is not None else mcmc
+        s = summ.get(p)
         if not s or p not in PRIOR_BOUNDS:
             return False
         lo, hi = PRIOR_BOUNDS[p]
-        f = (s["median"] - lo) / (hi - lo)
-        return f < 0.05 or f > 0.95
+        med = s["median"]
+        return med <= lo * 1.15 or med >= hi * 0.92     # within ~15%/8% of the bound value
 
-    mcmc = res.get("mcmc", {}).get("summary", {})
-    red_railers = sorted({p for m in ms for p in ("kappa_2", "vej_2", "temperature_floor_2")
-                          if _rails(m, p)})
-    blue_railers = sorted({p for m in ms for p in ("vej_1", "mej_1", "temperature_floor_1")
-                           if _rails(m, p)})
+    red_railers = sorted(p for p in ("kappa_2", "vej_2", "temperature_floor_2") if _rails(p))
+    blue_railers = sorted(p for p in ("vej_1", "mej_1", "temperature_floor_1") if _rails(p))
     vb = mcmc.get("vej_1", {}).get("median", float("nan"))
     kr = mcmc.get("kappa_2", {}).get("median", float("nan"))
     sig_mcmc = mcmc.get("sigma", {}).get("median", float("nan"))     # MCMC constrains σ best

@@ -203,7 +203,10 @@ def fit(method):
         f = os.path.join(OUT, "villar_abc.json")
         if os.path.exists(f):
             best = json.load(open(f))["best_params"]
-            best["sigma"] = 0.2                # scatter start: typical Villar+17 posterior scale
+            # σ start MUST be inside its (space-dependent) prior: 0.2 mag for magnitude space, but a
+            # flux-scale value (Jy, ~ the median flux error) for flux space — else the walkers init
+            # outside LogUniform(1e-8, 1e-3) Jy and the σ dimension is frozen at an invalid point.
+            best["sigma"] = 1e-4 if SPACE == "flux" else 0.2
             kw["initial_guess"] = best
             kw["initial_scatter"] = 1e-2
 
