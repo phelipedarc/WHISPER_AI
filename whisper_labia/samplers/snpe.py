@@ -33,6 +33,47 @@ from ..models import get_model
 from .base import BaseSampler, SamplerResult, summarize_posterior
 
 
+def _snpe_logl_worker(args):
+    """Exact log-likelihood of one posterior draw (module-level -> picklable for the parallel scan)."""
+    predict, names, times, bands, lik, scatter_idx, row = args
+    try:
+        params = {nm: float(v) for nm, v in zip(names, row)}
+        mf = predict(params, times, bands)
+        if scatter_idx is not None:
+            return float(lik.log_likelihood(mf, sigma_extra=float(row[scatter_idx])))
+        return float(lik.log_likelihood(mf))
+    except Exception:
+        return float("-inf")
+
+
+def _parallel_max_logl(worker_args, n_jobs, timeout):
+    """Evaluate the best-fit scan in parallel with a hard wall-clock cap.
+
+    The scan re-runs the (possibly expensive) forward model on each posterior draw; a single
+    pathological draw can make that model hang indefinitely and, in a serial loop, freeze the whole
+    fit. Running it in a process pool with a ``timeout`` means a hung draw costs at most ``timeout``
+    seconds: the pool is terminated and the best likelihood among the draws that DID finish is used.
+    Returns ``(logls_array_or_None, best_index)`` — ``None`` if nothing finished in time.
+    """
+    import multiprocessing as mp
+
+    n = len(worker_args)
+    n_jobs = max(1, min(int(n_jobs), n))
+    if n_jobs == 1:
+        return np.array([_snpe_logl_worker(a) for a in worker_args], dtype=float), None
+    ctx = mp.get_context("fork")
+    pool = ctx.Pool(n_jobs)
+    try:
+        out = pool.map_async(_snpe_logl_worker, worker_args)
+        logls = np.array(out.get(timeout=timeout), dtype=float)
+        return logls, None
+    except mp.TimeoutError:
+        return None, None                    # a draw hung; caller falls back to a bounded serial scan
+    finally:
+        pool.terminate()
+        pool.join()
+
+
 def _require_sbi():
     """Lazily import sbi/torch; raise a clear, actionable error if the ``[sbi]`` extra is missing."""
     try:
@@ -242,7 +283,7 @@ class SNPESampler(BaseSampler):
             predict_torch=None, scatter_param=None, hidden_features=None, num_transforms=None,
             num_bins=None, proposal_mode="posterior", truncate_quantile=1e-4,
             support_samples=10000, num_samples=10000, device="cpu", seed=0, show_progress=False,
-            num_workers=1, max_logl_scan=2000, **train_kwargs):
+            num_workers=1, max_logl_scan=2000, scan_timeout=300, **train_kwargs):
         """Fit ``lc`` with ``model`` via SNPE/NPE.
 
         ``num_rounds=1`` is amortized NPE; ``num_rounds>1`` focuses simulations sequentially.
@@ -410,21 +451,28 @@ class SNPESampler(BaseSampler):
         samples = pd.DataFrame(samples_np, columns=param_names)
 
         # Exact Gaussian metrics at the best (max-likelihood) posterior draw — scatter-augmented
-        # (with each draw's own scatter value) when a scatter parameter is fitted.
+        # (with each draw's own scatter value) when a scatter parameter is fitted. The scan re-runs the
+        # forward model per draw; it is done IN PARALLEL with a wall-clock cap so an expensive model
+        # (e.g. redback ~0.2 s/call) is fast and a single pathological draw cannot hang the fit.
         if scatter_param is not None:
             from ..likelihood import GaussianLikelihoodWithScatter
-            lik_metrics = GaussianLikelihoodWithScatter(lc, space=space, scatter_param=scatter_param)
-
-            def _row_logl(row):
-                mf = predict({nm: float(v) for nm, v in zip(param_names, row)}, times, bands)
-                return lik_metrics.log_likelihood(mf, sigma_extra=float(row[scatter_idx]))
+            lik_scan = GaussianLikelihoodWithScatter(lc, space=space, scatter_param=scatter_param)
         else:
-            def _row_logl(row):
-                return lik.log_likelihood(
-                    predict({nm: float(v) for nm, v in zip(param_names, row)}, times, bands))
-
+            lik_scan = lik
         scan = samples_np if len(samples_np) <= max_logl_scan else samples_np[:max_logl_scan]
-        logls = np.array([_row_logl(row) for row in scan], dtype=float)
+        args = [(predict, param_names, times, bands, lik_scan, scatter_idx, scan[i])
+                for i in range(len(scan))]
+        n_jobs = max(1, int(num_workers))
+        logls, _ = _parallel_max_logl(args, n_jobs, scan_timeout)
+        if logls is None:                           # parallel scan hit the timeout (a draw hung)
+            import warnings
+            warnings.warn(f"SNPE: max-likelihood scan exceeded scan_timeout={scan_timeout}s (a "
+                          "posterior draw stalled the forward model); scoring a small subset instead. "
+                          "This usually means a poorly-conditioned posterior — prefer magnitude space "
+                          "for neural SBI on flux data.", stacklevel=2)
+            logls, _ = _parallel_max_logl(args[:min(len(args), 4 * n_jobs)], n_jobs, scan_timeout)
+            if logls is None:
+                logls = np.array([float("-inf")])
         if np.any(np.isfinite(logls)):
             best_idx = int(np.nanargmax(logls))
             max_log_likelihood = float(logls[best_idx])
