@@ -315,8 +315,6 @@ def _report(out, res, samplers, params, labels, ms):
         f = (s["median"] - lo) / (hi - lo)
         return f < 0.05 or f > 0.95
 
-    sig = {m: res[m]["summary"]["sigma"]["median"] for m in ms if "sigma" in res[m]["summary"]}
-    sig_med = float(np.median(list(sig.values()))) if sig else float("nan")
     mcmc = res.get("mcmc", {}).get("summary", {})
     red_railers = sorted({p for m in ms for p in ("kappa_2", "vej_2", "temperature_floor_2")
                           if _rails(m, p)})
@@ -324,19 +322,30 @@ def _report(out, res, samplers, params, labels, ms):
                            if _rails(m, p)})
     vb = mcmc.get("vej_1", {}).get("median", float("nan"))
     kr = mcmc.get("kappa_2", {}).get("median", float("nan"))
+    sig_mcmc = mcmc.get("sigma", {}).get("median", float("nan"))     # MCMC constrains σ best
+    if space == "flux":
+        sig_line = (f"- **The scatter term works.** MCMC recovers a flux-space extra scatter "
+                    f"**σ ≈ {sig_mcmc:.2g} Jy** (∼ the per-point flux errors); the neural σ posteriors "
+                    "are broader (a single light curve weakly constrains a noise level). Folding it in "
+                    "quadrature turns the ")
+    else:
+        sig_line = (f"- **The scatter term works.** MCMC recovers an extra scatter "
+                    f"**σ ≈ {sig_mcmc:.2f} mag**, in the ballpark of **Villar+2017's σ = "
+                    f"{VILLAR17['sigma']:.3f} mag** (the neural σ posteriors run broader — a single "
+                    "light curve weakly constrains a noise level). Folding it in quadrature turns the ")
 
     lines += ["## Interpretation", "",
-              f"- **The scatter term works, and matches Villar+2017.** Every likelihood-based and "
-              f"neural method recovers an extra scatter **σ ≈ {sig_med:.2f} mag**, close to "
-              f"**Villar+2017's σ = {VILLAR17['sigma']:.3f} mag**. Folding it in quadrature turns the "
+              sig_line +
               "χ²/dof (vs reported errors) into ≈1 with nominal 95% predictive coverage — the excess is "
               "model systematics (a semi-analytic two-component kilonova can't capture every spectral "
               "feature), exactly what Villar+17 introduced σ to absorb.",
-              f"- **Blue component — well constrained.** With κ_blue fixed at 0.5 the blue component is "
-              f"fully specified in regime, and MCMC recovers v_ej^blue ≈ {vb:.2f} c and a defined "
-              f"temperature floor"
-              + ("" if blue_railers else " with no parameter railing the prior") + " — consistent with "
-              f"Villar+2017 (v^blue = {VILLAR17['vej_1']:.3f} c, T^blue = {VILLAR17['temperature_floor_1']:.0f} K).",
+              "- **Blue component.** With κ_blue fixed at 0.5 the blue component is well-specified in "
+              f"regime; MCMC gives v_ej^blue ≈ {vb:.2f} c"
+              + (" — pushed to the fast edge of the physical prior (the optical decline wants fast blue "
+                 "ejecta; the degeneracy only fully breaks with NIR)"
+                 if "vej_1" in blue_railers else
+                 f", consistent with Villar+2017 (v^blue = {VILLAR17['vej_1']:.3f} c, "
+                 f"T^blue = {VILLAR17['temperature_floor_1']:.0f} K)") + ".",
               ("- **Red component — " + ("still edge-limited" if red_railers else "now constrained") +
                ".** " + (
                    ("κ_red is *free* and the lanthanide-rich red ejecta radiate mostly in the NIR; with "
