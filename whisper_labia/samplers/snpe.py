@@ -283,7 +283,7 @@ class SNPESampler(BaseSampler):
             predict_torch=None, scatter_param=None, hidden_features=None, num_transforms=None,
             num_bins=None, proposal_mode="posterior", truncate_quantile=1e-4,
             support_samples=10000, num_samples=10000, device="cpu", seed=0, show_progress=False,
-            num_workers=1, max_logl_scan=2000, scan_timeout=300, **train_kwargs):
+            num_workers=1, max_logl_scan=2000, scan_timeout=300, standardize_x=True, **train_kwargs):
         """Fit ``lc`` with ``model`` via SNPE/NPE.
 
         ``num_rounds=1`` is amortized NPE; ``num_rounds>1`` focuses simulations sequentially.
@@ -297,6 +297,17 @@ class SNPESampler(BaseSampler):
         likelihood-based samplers receive. The context channels are constant across simulations for a
         fixed observing grid, but give an embedding net the cadence/noise structure and make the
         network amortizable over observations.
+
+        **Input normalisation:** ``standardize_x=True`` (default) applies a per-channel ``asinh(x/scale)``
+        transform (scale from the first round's simulations) to the conditioning input before it reaches
+        the estimator. This VARIANCE-STABILISES the input — essential for **flux-space** data whose
+        values span ~6 orders of magnitude (sbi z-scores the scale but not the skew); it makes flux
+        inputs as well-conditioned as magnitude and is near-identity for magnitude data. The same
+        transform is applied to the observation and to ``result.format_x``.
+
+        **Robust best-fit scan:** the post-fit max-likelihood scan (re-running the forward model on the
+        posterior draws) runs in a process pool (``num_workers``) with a wall-clock cap ``scan_timeout``
+        [s], so an expensive or occasionally-pathological model call cannot hang the fit.
 
         **Density estimator (flexible):** ``density_estimator`` is an sbi estimator name ('maf', 'nsf',
         'mdn', ...) **or** a pre-built ``posterior_nn(...)`` factory. ``embedding_net`` is ``None``
@@ -399,6 +410,20 @@ class SNPESampler(BaseSampler):
         if extra is not None:
             x_np = np.concatenate([x_np, extra])
         x_o = torch.as_tensor(x_np, dtype=torch.float32).to(device)
+
+        # Input normalisation: a per-channel asinh transform that VARIANCE-STABILISES the conditioning
+        # input before it reaches the network. sbi already z-scores x (fixing the scale), but not the
+        # SKEW: flux-space values span ~6 orders of magnitude (~1e-6..1e-3 Jy), so the estimator trains
+        # poorly. asinh(x / scale) compresses that dynamic range (≈ linear for |x|≲scale, ≈ log beyond)
+        # while handling the small negatives that noise produces — making flux inputs as well-conditioned
+        # as magnitude. The per-channel scale is set from the first round's simulations.
+        x_scale = None                       # per-channel robust scale (on CPU), set from round-0 sims
+
+        def _norm(t):
+            if not (standardize_x and x_scale is not None):
+                return t
+            return torch.asinh(t / x_scale.to(t.device))
+
         de_builder = _build_density_estimator(
             density_estimator, embedding_net, hidden_features, num_transforms, num_bins)
         inference = sb.NPE(prior=torch_prior, density_estimator=de_builder,
@@ -419,6 +444,10 @@ class SNPESampler(BaseSampler):
                 theta, x = sb.simulate_for_sbi(
                     simulator, sim_proposal, num_simulations=int(num_simulations),
                     num_workers=num_workers, seed=int(seed) + r, show_progress_bar=show_progress)
+            x = x if isinstance(x, torch.Tensor) else torch.as_tensor(np.asarray(x), dtype=torch.float32)
+            if standardize_x and x_scale is None:       # per-channel robust scale from round 0's sims
+                x_scale = x.detach().to("cpu").abs().median(dim=0).values.clamp_min(1e-30)
+            x = _norm(x)                                # variance-stabilised conditioning input
             if restricted:
                 # Truncated SNPE: the proposal is a RestrictedPrior (not a posterior) -> first-round loss.
                 de_net = inference.append_simulations(theta, x, exclude_invalid_x=True).train(
@@ -428,7 +457,7 @@ class SNPESampler(BaseSampler):
                     theta, x, proposal=proposal, exclude_invalid_x=True).train(
                     show_train_summary=False, **train_kwargs)
             posterior = inference.build_posterior(de_net)
-            posterior.set_default_x(x_o)                      # so result.posterior.sample() needs no x
+            posterior.set_default_x(_norm(x_o))               # normalised obs; sample() needs no x
             posteriors.append(posterior)
             if r < int(num_rounds) - 1:                      # update proposal for the next round
                 if restricted:
@@ -446,7 +475,7 @@ class SNPESampler(BaseSampler):
         runtime = time.perf_counter() - t0
 
         samples_np = np.asarray(
-            posterior.sample((int(num_samples),), x=x_o, show_progress_bars=show_progress)
+            posterior.sample((int(num_samples),), x=_norm(x_o), show_progress_bars=show_progress)
             .detach().cpu().numpy(), dtype=float)
         samples = pd.DataFrame(samples_np, columns=param_names)
 
@@ -489,6 +518,7 @@ class SNPESampler(BaseSampler):
             "density_estimator": density_estimator if isinstance(density_estimator, str) else "custom",
             "embedding_net": emb_spec,
             "x_format": x_format,
+            "standardize_x": bool(standardize_x),
             "sim_backend": "torch" if predict_torch is not None else "numpy",
             "scatter_param": scatter_param,
             "proposal_mode": proposal_mode,
@@ -518,7 +548,7 @@ class SNPESampler(BaseSampler):
             v = np.asarray(values, dtype=float).ravel()
             if extra is not None:
                 v = np.concatenate([v, extra])
-            return torch.as_tensor(v, dtype=torch.float32).to(device)
+            return _norm(torch.as_tensor(v, dtype=torch.float32).to(device))   # same normalisation
 
         result.format_x = format_x
         return result

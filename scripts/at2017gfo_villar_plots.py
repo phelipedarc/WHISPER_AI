@@ -162,15 +162,17 @@ def plot(out, samplers, params, labels, bands):
     # sharey=True -> ONE common magnitude axis for every panel; its range is set from the data (+the
     # median model curves) so the σ-inflated 95% band tails simply clip at the edges instead of
     # blowing the scale up to 30-40 mag and squashing the informative region.
-    fig, ax = plt.subplots(len(ms), 1, figsize=(9.4, 2.4 * len(ms)), squeeze=False,
+    fig, ax = plt.subplots(len(ms), 1, figsize=(10.5, 3.6 * len(ms)), squeeze=False,
                            sharex=True, sharey=True)
     band_col = _band_colors(bands)                # g/r/i palette or a UV->NIR gradient
     ref = npz[ms[0]]
     t, band = ref["time"], ref["band"].astype(str)
     mag, err = ref["mag"], ref["mag_err"]
-    med_all = np.concatenate([npz[m][f"curve_{b}"][1] for m in ms for b in bands])   # median curves
-    y_bright = min(float(np.min(mag - err)), float(np.percentile(med_all, 1))) - 0.5
-    y_faint = max(float(np.max(mag + err)), float(np.percentile(med_all, 99))) + 0.5
+    # y-range from the DATA + median curves (not the σ-inflated tails), and tightened toward the data
+    # so the many bands spread out vertically and are easy to tell apart; taller panels add resolution.
+    med_all = np.concatenate([npz[m][f"curve_{b}"][1] for m in ms for b in bands])
+    y_bright = min(float(np.min(mag - err)), float(np.percentile(med_all, 2))) - 0.4
+    y_faint = max(float(np.max(mag + err)), float(np.percentile(med_all, 92))) + 0.4
     for i, m in enumerate(ms):
         a = ax[i][0]; d = npz[m]
         for b in bands:
