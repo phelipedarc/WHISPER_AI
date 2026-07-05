@@ -292,18 +292,19 @@ class SNPESampler(BaseSampler):
         (errors required).
 
         **Input layout:** ``x_format="value"`` (default) conditions on the data-space values alone;
-        ``x_format="stacked"`` conditions on the full observation tuple — four channels
-        ``(value, error, time, band code)`` concatenated per point, exactly the information the
-        likelihood-based samplers receive. The context channels are constant across simulations for a
-        fixed observing grid, but give an embedding net the cadence/noise structure and make the
-        network amortizable over observations.
+        ``x_format="stacked"`` appends two constant context channels — ``(value, error, time)`` per
+        point — giving an embedding net the cadence/noise structure. The **band is NOT** a channel:
+        every simulation is drawn on the same ``(time, band)`` grid as the observation, so each
+        position's band is identical for the data and every simulation (encoded by position); a
+        constant channel adds nothing for a single-object fit.
 
-        **Input normalisation:** ``standardize_x=True`` (default) applies a per-channel ``asinh(x/scale)``
-        transform (scale from the first round's simulations) to the conditioning input before it reaches
-        the estimator. This VARIANCE-STABILISES the input — essential for **flux-space** data whose
-        values span ~6 orders of magnitude (sbi z-scores the scale but not the skew); it makes flux
-        inputs as well-conditioned as magnitude and is near-identity for magnitude data. The same
-        transform is applied to the observation and to ``result.format_x``.
+        **Input normalisation:** ``standardize_x`` (default ``True`` = ``"asinh"``; also ``"zscore"`` or
+        ``"none"``/``False``) normalises the conditioning input before it reaches the estimator, with
+        per-channel statistics fitted on the first round's simulations. ``"asinh"`` (``asinh(x/scale)``)
+        VARIANCE-STABILISES a wide dynamic range — essential for **flux-space** data whose values span
+        ~6 orders of magnitude (sbi z-scores the scale but not the skew), making flux inputs as
+        well-conditioned as magnitude. The **same** transform is applied to the simulations, the
+        observation ``x_o`` used to estimate the posterior, and ``result.format_x``.
 
         **Robust best-fit scan:** the post-fit max-likelihood scan (re-running the forward model on the
         posterior draws) runs in a process pool (``num_workers``) with a wall-clock cap ``scan_timeout``
@@ -372,13 +373,15 @@ class SNPESampler(BaseSampler):
                                  f"({param_names}).")
             scatter_idx = param_names.index(scatter_param)
 
-        # Constant context channels for the stacked layout: per-point error, time, integer band code.
+        # Constant context channels for the stacked layout: per-point error + time. The BAND is NOT a
+        # channel: every simulation is drawn on the SAME (time, band) grid as the observation, so the
+        # band at each position is identical for X_input and every X_sim — its identity is encoded by
+        # position, and a constant channel carries no information for a single-object fit.
         sig_clean = np.where(np.isfinite(np.asarray(lik.sigma, float)) & (np.asarray(lik.sigma) > 0),
                              np.asarray(lik.sigma, float), 1.0)
         if x_format == "stacked":
-            band_codes = np.unique(bands, return_inverse=True)[1].astype(float)
-            extra = np.concatenate([sig_clean, times, band_codes])
-            n_channels = 4
+            extra = np.concatenate([sig_clean, times])
+            n_channels = 3
         else:
             extra, n_channels = None, 1
 
@@ -417,12 +420,31 @@ class SNPESampler(BaseSampler):
         # poorly. asinh(x / scale) compresses that dynamic range (≈ linear for |x|≲scale, ≈ log beyond)
         # while handling the small negatives that noise produces — making flux inputs as well-conditioned
         # as magnitude. The per-channel scale is set from the first round's simulations.
-        x_scale = None                       # per-channel robust scale (on CPU), set from round-0 sims
+        # Input normalisation method. asinh(x/scale) variance-stabilises (best for wide-dynamic-range
+        # flux); zscore standardises; none disables. Stats (on CPU) are set from round-0 sims and
+        # applied to the sims, the observation x_o, AND result.format_x — consistently.
+        _norm_method = ("asinh" if standardize_x is True
+                        else "none" if standardize_x in (False, None)
+                        else str(standardize_x).lower())
+        if _norm_method not in ("asinh", "zscore", "none"):
+            raise ValueError("standardize_x must be True/False or 'asinh'/'zscore'/'none'; "
+                             f"got {standardize_x!r}")
+        _norm_stats = {}
+
+        def _fit_norm(x0):
+            xc = x0.detach().to("cpu")
+            if _norm_method == "asinh":
+                _norm_stats["scale"] = xc.abs().median(dim=0).values.clamp_min(1e-30)
+            elif _norm_method == "zscore":
+                _norm_stats["mean"] = xc.mean(dim=0)
+                _norm_stats["std"] = xc.std(dim=0).clamp_min(1e-30)
 
         def _norm(t):
-            if not (standardize_x and x_scale is not None):
-                return t
-            return torch.asinh(t / x_scale.to(t.device))
+            if _norm_method == "asinh" and "scale" in _norm_stats:
+                return torch.asinh(t / _norm_stats["scale"].to(t.device))
+            if _norm_method == "zscore" and "mean" in _norm_stats:
+                return (t - _norm_stats["mean"].to(t.device)) / _norm_stats["std"].to(t.device)
+            return t
 
         de_builder = _build_density_estimator(
             density_estimator, embedding_net, hidden_features, num_transforms, num_bins)
@@ -445,9 +467,9 @@ class SNPESampler(BaseSampler):
                     simulator, sim_proposal, num_simulations=int(num_simulations),
                     num_workers=num_workers, seed=int(seed) + r, show_progress_bar=show_progress)
             x = x if isinstance(x, torch.Tensor) else torch.as_tensor(np.asarray(x), dtype=torch.float32)
-            if standardize_x and x_scale is None:       # per-channel robust scale from round 0's sims
-                x_scale = x.detach().to("cpu").abs().median(dim=0).values.clamp_min(1e-30)
-            x = _norm(x)                                # variance-stabilised conditioning input
+            if _norm_method != "none" and not _norm_stats:   # fit the normaliser on round-0 sims
+                _fit_norm(x)
+            x = _norm(x)                                # normalised conditioning input
             if restricted:
                 # Truncated SNPE: the proposal is a RestrictedPrior (not a posterior) -> first-round loss.
                 de_net = inference.append_simulations(theta, x, exclude_invalid_x=True).train(
@@ -518,7 +540,7 @@ class SNPESampler(BaseSampler):
             "density_estimator": density_estimator if isinstance(density_estimator, str) else "custom",
             "embedding_net": emb_spec,
             "x_format": x_format,
-            "standardize_x": bool(standardize_x),
+            "normalize_x": _norm_method,
             "sim_backend": "torch" if predict_torch is not None else "numpy",
             "scatter_param": scatter_param,
             "proposal_mode": proposal_mode,
