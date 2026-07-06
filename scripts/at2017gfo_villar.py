@@ -218,8 +218,27 @@ def fit(method):
     if hasattr(res, "posterior") and hasattr(res, "format_x"):
         xt = res.format_x(np.asarray(lc.magnitude, float))
         t1 = time.perf_counter()
-        res.posterior.sample((2000,), x=xt, show_progress_bars=False)
-        amortized = time.perf_counter() - t1
+        # This re-conditions the trained estimator on (essentially) the same real x_o used for the
+        # main fit, so it is exposed to the SAME pathologies as the library's final-sample step (see
+        # whisper_labia.samplers.snpe._robust_final_sample): a pathologically low acceptance rate
+        # (hangs naive rejection) or a degenerate flow transform (AssertionError). Probe first with the
+        # same bounded, hang-proof estimator and skip the timing (rather than crash the whole script)
+        # when rejection sampling would not be practical — the "amortized" number does not mean much in
+        # that regime anyway.
+        try:
+            from whisper_labia.samplers.snpe import _probe_acceptance_rate
+            import torch
+            rate = _probe_acceptance_rate(res.posterior, res.posterior.prior, torch, xt)
+            if rate >= 1e-3:
+                res.posterior.sample((2000,), x=xt, show_progress_bars=False)
+                amortized = time.perf_counter() - t1
+            else:
+                warnings.warn(f"[{method}] amortized-resample benchmark skipped: pathologically low "
+                              f"acceptance rate (~{rate:.2e}) would hang naive rejection sampling.")
+        except AssertionError:
+            warnings.warn(f"[{method}] amortized-resample benchmark hit a degenerate flow transform "
+                          "(nflows spline); skipping this timing (does not affect the fitted "
+                          "posterior).")
 
     ppc = _ppc_arrays(res, lc, name, n_draws=200, seed=0)
     names = [p for p in res.samples.columns if p != "distance"]

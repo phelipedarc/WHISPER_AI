@@ -273,6 +273,78 @@ def _resolve_device(device, torch):
     return "cpu"
 
 
+def _probe_acceptance_rate(posterior, torch_prior, torch, x_o_norm, n_probe=4000):
+    """Bounded, single-shot estimate of a posterior's within-prior acceptance rate at ``x_o_norm``.
+
+    sbi's own ``leakage_correction()``/``log_prob(norm_posterior=True)`` estimate this by
+    accept-reject sampling *until N are accepted* — at a pathologically low acceptance rate that
+    is exactly as slow as the failure it is meant to diagnose (confirmed: it hangs identically).
+    This instead draws a FIXED ``n_probe`` sample directly from the density estimator (one
+    unconditional forward pass — cost independent of the acceptance rate) and checks what fraction
+    land in the prior support: cheap and hang-proof, at the cost of being an estimate rather than
+    an exact count.
+    """
+    with torch.no_grad():
+        cond = x_o_norm if x_o_norm.dim() > 1 else x_o_norm.unsqueeze(0)
+        probe = posterior.posterior_estimator.sample((n_probe,), condition=cond)
+        probe = probe.reshape(-1, probe.shape[-1])
+        return float(torch.isfinite(torch_prior.log_prob(probe)).float().mean().item())
+
+
+def _robust_final_sample(posterior, inference, de_net, torch_prior, torch, x_o_norm, num_samples,
+                          show_progress, num_workers, min_acceptance=1e-3, n_probe=4000):
+    """Sample the final (real-data-conditioned) posterior, falling back to MCMC if needed.
+
+    ``DirectPosterior.sample()`` (the sbi default) draws via rejection sampling against the prior,
+    which requires the flow's inverse transform. Two failure modes surface only at THIS call — never
+    during training, which conditions on simulated placeholder ``x``, not the real ``x_o`` — because
+    the real observation can land in a region the estimator extrapolates poorly: (1) a pathologically
+    low acceptance rate (the estimator puts most conditional mass outside the prior box), which makes
+    rejection sampling impractically slow rather than raise, and (2) a numerically degenerate spline
+    coefficient in the flow's inverse (nflows' ``rational_quadratic_spline`` assertion), for
+    flexible estimators like NSF. Both are avoided by ``MCMCPosterior``, whose potential function
+    calls the estimator's raw (unnormalised) ``log_prob`` directly — no rejection loop at all — at the
+    cost of being slower per sample.
+
+    The acceptance-rate probe must NOT use sbi's own ``leakage_correction``/``log_prob(norm_posterior=
+    True)``: both estimate the correction factor by *accept-reject sampling until N are accepted*, so
+    at a pathological acceptance rate they hang exactly like ``.sample()`` (confirmed: it timed out
+    identically). Instead, draw a FIXED ``n_probe`` sample directly from the density estimator (one
+    unconditional forward pass, cost independent of the acceptance rate) and check what fraction land
+    in the prior support — a cheap, hang-proof estimate. Healthy runs are unaffected: the probe is fast
+    and the common path (rejection sampling) is untouched.
+    """
+    import warnings
+
+    def _mcmc_fallback(reason):
+        warnings.warn(
+            f"SNPE: final posterior sampling {reason}; falling back to MCMC-based sampling "
+            "(slice_np_vectorized) which conditions via log_prob instead of the flow's inverse.",
+            stacklevel=3)
+        mcmc_posterior = inference.build_posterior(
+            de_net, sample_with="mcmc", mcmc_method="slice_np_vectorized",
+            mcmc_parameters={"num_chains": min(20, max(4, num_workers)), "warmup_steps": 100})
+        mcmc_posterior.set_default_x(x_o_norm)
+        return mcmc_posterior.sample((num_samples,), x=x_o_norm, show_progress_bars=show_progress)
+
+    try:
+        rate = _probe_acceptance_rate(posterior, torch_prior, torch, x_o_norm, n_probe)
+    except Exception:
+        rate = 1.0
+    method = "rejection"
+    if rate < min_acceptance:
+        result = _mcmc_fallback(f"has a pathologically low acceptance rate (~{rate:.2e})")
+        method = "mcmc_fallback"
+    else:
+        try:
+            result = posterior.sample((num_samples,), x=x_o_norm, show_progress_bars=show_progress)
+        except AssertionError:
+            result = _mcmc_fallback("hit a numerically-degenerate flow transform (AssertionError)")
+            method = "mcmc_fallback"
+    samples_np = np.asarray(result.detach().cpu().numpy(), dtype=float)
+    return samples_np, method, rate
+
+
 class SNPESampler(BaseSampler):
     """Sequential Neural Posterior Estimation (sbi ``NPE``). See the module docstring."""
 
@@ -480,6 +552,15 @@ class SNPESampler(BaseSampler):
                     show_train_summary=False, **train_kwargs)
             posterior = inference.build_posterior(de_net)
             posterior.set_default_x(_norm(x_o))               # normalised obs; sample() needs no x
+            # Pre-cache the leakage/normalising-constant factor with the bounded probe (see
+            # _probe_acceptance_rate) so any internal `log_prob(norm_posterior=True)` call this round
+            # or the next (e.g. inside `get_density_thresholder` below) reuses it instead of
+            # re-deriving it via sbi's own accept-reject loop, which hangs at low acceptance.
+            try:
+                probed_rate = _probe_acceptance_rate(posterior, torch_prior, torch, _norm(x_o))
+                posterior._leakage_density_correction_factor = torch.tensor(max(probed_rate, 1e-6))
+            except Exception:
+                pass
             posteriors.append(posterior)
             if r < int(num_rounds) - 1:                      # update proposal for the next round
                 if restricted:
@@ -496,9 +577,9 @@ class SNPESampler(BaseSampler):
                     proposal = posterior
         runtime = time.perf_counter() - t0
 
-        samples_np = np.asarray(
-            posterior.sample((int(num_samples),), x=_norm(x_o), show_progress_bars=show_progress)
-            .detach().cpu().numpy(), dtype=float)
+        samples_np, final_sample_method, final_sample_acceptance = _robust_final_sample(
+            posterior, inference, de_net, torch_prior, torch, _norm(x_o), int(num_samples),
+            show_progress, max(1, int(num_workers)))
         samples = pd.DataFrame(samples_np, columns=param_names)
 
         # Exact Gaussian metrics at the best (max-likelihood) posterior draw — scatter-augmented
@@ -541,6 +622,8 @@ class SNPESampler(BaseSampler):
             "embedding_net": emb_spec,
             "x_format": x_format,
             "normalize_x": _norm_method,
+            "final_sample_method": final_sample_method,
+            "final_sample_acceptance_rate": final_sample_acceptance,
             "sim_backend": "torch" if predict_torch is not None else "numpy",
             "scatter_param": scatter_param,
             "proposal_mode": proposal_mode,

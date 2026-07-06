@@ -10,14 +10,14 @@ $$\ln\mathcal{L} = -\tfrac{1}{2}\sum_i\left[\frac{(O_i-M_i)^2}{\sigma_i^2+\sigma
 
 | parameter | MCMC | ABC | ABC-SMC | NPE-MDN (GPU) | NPE-NSF (GPU) | SNPE-5r NSF (GPU, no embed) |
 |---|---|---|---|---|---|---|
-| M_{ej}^{blue} | 0.07321 [+0.0043 −0.0045] | 0.08603 [+0.0092 −0.014] | 0.08589 [+0.0096 −0.012] | 0.08936 [+0.0084 −0.013] | 0.09058 [+0.0062 −0.01] | 0.09152 [+0.0053 −0.014] |
-| v_{ej}^{blue} | 0.2901 [+0.0069 −0.012] | 0.2544 [+0.034 −0.034] | 0.2547 [+0.027 −0.036] | 0.2575 [+0.025 −0.035] | 0.2934 [+0.0052 −0.036] | 0.2857 [+0.011 −0.052] |
-| T_{floor}^{blue} | 432.3 [+7.4e+02 −2.7e+02] | 3292 [+3.1e+02 −1.7e+03] | 3266 [+3.1e+02 −2.7e+03] | 2425 [+1.1e+03 −1.7e+03] | 1558 [+1.8e+03 −1.4e+03] | 1783 [+1.4e+03 −1.5e+03] |
-| M_{ej}^{red} | 0.0524 [+0.0071 −0.006] | 0.05721 [+0.029 −0.037] | 0.05421 [+0.03 −0.029] | 0.05731 [+0.023 −0.026] | 0.05537 [+0.029 −0.02] | 0.06474 [+0.025 −0.034] |
-| v_{ej}^{red} | 0.08084 [+0.01 −0.0098] | 0.173 [+0.092 −0.088] | 0.1763 [+0.092 −0.091] | 0.1755 [+0.063 −0.063] | 0.2123 [+0.06 −0.097] | 0.1504 [+0.094 −0.081] |
-| \kappa_{red} | 1.029 [+0.049 −0.022] | 7.038 [+14 −5.4] | 7.633 [+16 −5.8] | 10.19 [+7.3 −6.6] | 4.484 [+9.4 −2.2] | 7.204 [+13 −5.2] |
-| T_{floor}^{red} | 2816 [+1.3e+02 −1.1e+02] | 949.6 [+3e+03 −7.8e+02] | 1127 [+3e+03 −8.7e+02] | 3182 [+1.1e+03 −2.2e+03] | 1773 [+2.3e+03 −1.5e+03] | 1587 [+2.5e+03 −1.4e+03] |
-| \sigma | 0.2773 [+0.016 −0.014] | — | — | 0.8428 [+0.64 −0.62] | 0.1519 [+0.27 −0.13] | 0.4688 [+0.75 −0.42] |
+| M_{ej}^{blue} | 0.07321 [+0.0043 −0.0045] | 0.08603 [+0.0092 −0.014] | 0.08589 [+0.0096 −0.012] | 0.08338 [+0.011 −0.014] | 0.08778 [+0.0057 −0.011] | 0.08596 [+0.0079 −0.014] |
+| v_{ej}^{blue} | 0.2901 [+0.0069 −0.012] | 0.2544 [+0.034 −0.034] | 0.2547 [+0.027 −0.036] | 0.2608 [+0.025 −0.049] | 0.287 [+0.0085 −0.028] | 0.2772 [+0.018 −0.043] |
+| T_{floor}^{blue} | 432.3 [+7.4e+02 −2.7e+02] | 3292 [+3.1e+02 −1.7e+03] | 3266 [+3.1e+02 −2.7e+03] | 2027 [+1.4e+03 −1.2e+03] | 3261 [+1.7e+02 −2.3e+03] | 2929 [+4.5e+02 −2.3e+03] |
+| M_{ej}^{red} | 0.0524 [+0.0071 −0.006] | 0.05721 [+0.029 −0.037] | 0.05421 [+0.03 −0.029] | 0.0606 [+0.022 −0.026] | 0.05883 [+0.027 −0.029] | 0.06762 [+0.023 −0.033] |
+| v_{ej}^{red} | 0.08084 [+0.01 −0.0098] | 0.173 [+0.092 −0.088] | 0.1763 [+0.092 −0.091] | 0.18 [+0.064 −0.065] | 0.1622 [+0.091 −0.087] | 0.1465 [+0.088 −0.063] |
+| \kappa_{red} | 1.029 [+0.049 −0.022] | 7.038 [+14 −5.4] | 7.633 [+16 −5.8] | 6.985 [+10 −4.5] | 7.58 [+12 −5.3] | 5.218 [+9.2 −3.5] |
+| T_{floor}^{red} | 2816 [+1.3e+02 −1.1e+02] | 949.6 [+3e+03 −7.8e+02] | 1127 [+3e+03 −8.7e+02] | 2720 [+1.6e+03 −1.6e+03] | 640.2 [+2.6e+03 −4.7e+02] | 797.8 [+2.8e+03 −6.2e+02] |
+| \sigma | 0.2773 [+0.016 −0.014] | — | — | 0.8263 [+0.75 −0.65] | 0.5255 [+0.16 −0.12] | 0.6841 [+0.71 −0.56] |
 
 *Reference — **Villar et al. 2017 (ApJL 851 L21), Table 2, 2-component fit** (κ_blue = 0.5 fixed, matching this setup): M_ej^blue = 0.023 M☉, v^blue = 0.256 c, T^blue = 3983 K, M_ej^red = 0.050 M☉, v^red = 0.149 c, κ_red = 3.65 cm²/g, T^red = 1151 K, σ = 0.256 mag (WAIC = −1030). Villar+17 fit a much larger UV–optical–NIR dataset with a radiative-transfer-calibrated model, so the absolute values are a literature anchor, not ground truth. The medians ÷ Villar+17 are compared in the summary figure below.*
 
@@ -28,9 +28,9 @@ $$\ln\mathcal{L} = -\tfrac{1}{2}\sum_i\left[\frac{(O_i-M_i)^2}{\sigma_i^2+\sigma
 | MCMC | 72.3 | 1.04 | 0.95 | 2886 | 2886 | 89 |
 | ABC | 69.0 | 69.01 | 0.65 | 153 | 153 | 13241 |
 | ABC-SMC | 74.9 | 74.93 | 0.61 | 236 | 236 | 14449 |
-| NPE-MDN (GPU) | 91.1 | 1.17 | 1.00 | 921 | 0.02 | 135 |
-| NPE-NSF (GPU) | 90.7 | 1.38 | 0.97 | 1499 | 0.08 | 131 |
-| SNPE-5r NSF (GPU, no embed) | 85.1 | 0.73 | 1.00 | 1161 | 1161 | 135 |
+| NPE-MDN (GPU) | 86.5 | 1.02 | 1.00 | 856 | 0.01 | 152 |
+| NPE-NSF (GPU) | 91.7 | 1.20 | 0.99 | 1227 | 0.07 | 146 |
+| SNPE-5r NSF (GPU, no embed) | 90.5 | 1.01 | 1.00 | 942 | 942 | 139 |
 
 *χ²/dof against the reported errors is ≫1 for every method — high-SNR kilonova photometry always carries model systematics beyond the measurement errors; that is exactly what σ absorbs: with the fitted scatter the χ²/dof (σᵢ ⊕ σ) is ≈1 and the predictive coverage is nominal. AIC values are comparable only among methods fitting the same parameter set (the ABC family omits σ).*
 
@@ -61,6 +61,12 @@ Joint posteriors of all fitted parameters (ejecta masses shown as log₁₀), ev
 Each method's 95% posterior-predictive model band in g/r/i (coloured) over the AT2017GFO photometry, with the per-panel χ²/dof (vs reported errors and vs errors ⊕ σ) and 95% coverage. MCMC gives the tightest, best-tracking band; the neural methods carry wider bands reflecting the marginal σ uncertainty.
 
 ![posterior-predictive light curves](figures/at2017gfo_villar/villar_ppc.png)
+
+### Posterior-predictive light curves — early time (zoom)
+
+The same posterior-predictive check, zoomed to the first 10 days (where the two components pull apart fastest) and laid out as one square panel per method for a closer read of the band-by-band structure.
+
+![posterior-predictive light curves, early time](figures/at2017gfo_villar/villar_ppc_grid.png)
 
 ### Summary — medians & runtime
 

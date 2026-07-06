@@ -5,6 +5,66 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Full UV–optical–NIR AT2017GFO application + SNPE robustness against pathological real-data conditioning
+- **Full-UVOIR data.** `scripts/fetch_at2017gfo_full.py` pulls the complete AT2017GFO photometry from
+  the Open Astronomy Catalog (607 detections, 18 bands, 0.5–25 d, Vega→AB converted where needed) into
+  `tests/data/at2017gfo_full.csv`. `two_component_kilonova._redback_band` now maps any band redback's
+  filter table knows (`H`/`J`/`Ks`/`Y` → 2MASS, `U`/`B`/`V`/`R`/`I` → Bessell, `uvot::*` → Swift UVOT),
+  not just optical grizy, so the model can be fit to the full UV→optical→NIR range.
+  `docs/PLAN_at2017gfo_fullband.md` records the acquisition plan and cost budget.
+- **Physical ejecta-velocity prior.** `at2017gfo_villar.py`'s real-data prior tightened
+  `vej_1`/`vej_2` from `Uniform(0.01, 0.7)` to `Uniform(0.05, 0.3)` (physical kilonova range) — the old
+  bound let the MAP rail to an unphysical 0.7 c, a genuine-but-unphysical optimum caused by the
+  permissive prior combined with g/r/i-only data underconstraining the red component. With the full
+  UVOIR data the red component (κ_red, v_red, T_red) now moves off the prior edges toward
+  Villar+2017-consistent values — the payoff of the NIR coverage g/r/i alone cannot supply.
+- **Flux-vs-magnitude comparison.** `space="flux"|"magnitude"` now routes through the whole real-data
+  application (`VILLAR_SPACE` env var): data, simulator noise, likelihood and the σ scatter prior
+  (`LogUniform` bounds are space-appropriate — Jy for flux, mag for magnitude) are all consistent in
+  the chosen space. Fixed a units bug where MCMC's ABC-seeded σ warm-start was hardcoded to a
+  magnitude-scale value (0.2) regardless of space, silently placing flux-space MCMC's σ walker outside
+  its own `LogUniform(1e-8, 1e-3)` Jy prior.
+- **SNPE input normalisation (`standardize_x="asinh"|"zscore"|"none"`).** Flux-space light curves span
+  ~6 orders of magnitude; sbi's built-in z-scoring fixes scale but not skew, which left flux-space
+  neural SBI poorly conditioned. `asinh(x/scale)` (per-channel `scale` fit on round-0 simulations,
+  applied identically to simulations, the observation and `result.format_x`) variance-stabilises the
+  input, making flux as well-conditioned as magnitude space.
+- **Band removed as a stacked-input channel.** Every SNPE simulation is drawn on the identical
+  `(time, band)` grid as the observation, so band identity is already encoded positionally — a constant
+  per-position band channel added no information and empirically hurt flux-space fits (removing it
+  improved recovered κ_red from 2.34 to 3.37 cm²/g, closer to Villar+17's 3.65).
+- **Robust post-fit max-likelihood scan.** The scan re-runs the forward model on up to `max_logl_scan`
+  posterior draws to get the exact best-fit/AIC/BIC; a single pathological draw calling an expensive
+  model (e.g. redback, ~0.2–0.3 s/call) could hang the entire fit for hours. Now runs in a process pool
+  with a wall-clock `scan_timeout` (default 300 s), degrading to a smaller scored subset on timeout
+  rather than hanging (root-caused a 10.8 h flux-space SNPE hang; fixed to ~200 s).
+  Confirmed **not** a GPU or simulation-parallelism issue (both were already healthy).
+- **Robust final posterior sampling against real-data pathologies.** Conditioning a trained density
+  estimator on the *real* observation (rather than the simulated placeholders seen in training) can
+  expose two failure modes sbi's default rejection sampling does not handle gracefully: a near-zero
+  acceptance rate (technically not an error, just impractically slow — sbi's own diagnosis loop is
+  itself just as slow, since it estimates the correction factor by accept-reject sampling until enough
+  are accepted) and a numerically degenerate spline coefficient in the flow's inverse transform
+  (`AssertionError` deep in `nflows`, for flexible estimators like NSF). `SNPESampler.fit` now probes
+  the acceptance rate with a single bounded, hang-proof sample (drawn directly from the density
+  estimator, cost independent of the acceptance rate) and catches the `AssertionError`, falling back to
+  MCMC-based posterior sampling (conditions via the numerically-stable forward `log_prob` instead of the
+  flow's inverse) in either case. The same acceptance factor is pre-cached on each round's posterior so
+  sequential/truncated SNPE's internal proposal-restriction step (`get_density_thresholder`) reuses it
+  instead of re-deriving it the slow way. `result.info["final_sample_method"]`
+  (`"rejection"`/`"mcmc_fallback"`) and `["final_sample_acceptance_rate"]` record which path was taken.
+  Also fixed the same exposure in `scripts/at2017gfo_villar.py`'s amortized-resample timing benchmark.
+- **PPC plot readability.** Taller per-band posterior-predictive panels (shared y-axis, range set from
+  data + model medians rather than σ-inflated tails) so bands separate cleanly. New supplementary
+  **`villar_ppc_grid.png`**: the same check zoomed to the first 10 days, laid out as one square panel
+  per method with larger labels and bolder, edge-outlined data markers, for a closer read of band-by-band
+  structure where the two components pull apart fastest.
+- **Rail/σ reporting fixes** in `at2017gfo_villar_plots.py`: prior-rail detection now judges proximity
+  to the bound *value* (not fraction of prior range, which misreported well-constrained values under
+  wide priors like κ∈[1,30]) and is keyed on the MCMC reference posterior rather than any single
+  (possibly broad neural) method; the reported σ is MCMC's own value with space-aware units (mag vs Jy)
+  rather than a cross-method median dragged up by broad neural posteriors.
+
 ### Villar+2017 AT2017GFO application: free-scatter likelihood, ABC comparison space, parallel MCMC
 - **`GaussianLikelihoodWithScatter`** (`kind="gaussian_scatter"`/`"villar"`): Gaussian likelihood with
   a **free extra-scatter term σ added in quadrature** to the reported errors — Villar et al. 2017

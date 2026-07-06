@@ -267,7 +267,8 @@ is the convenience wrapper.
 density_estimator="maf", embedding_net=None, embedding_latent=32, x_format="value", predict_torch=None,
 scatter_param=None, hidden_features=None, num_transforms=None, num_bins=None,
 proposal_mode="posterior", truncate_quantile=1e-4, support_samples=10000, num_samples=10000,
-device="cpu", seed=0, show_progress=False, num_workers=1, max_logl_scan=2000, **train_kwargs)`** —
+device="cpu", seed=0, show_progress=False, num_workers=1, max_logl_scan=2000, scan_timeout=300,
+standardize_x=True, **train_kwargs)`** —
 `scatter_param` names a prior parameter used as the free Villar+17 extra-scatter term: it enters the
 simulation noise as `N(0, √(σᵢ²+σ²))` per draw, so the density estimator learns its posterior from
 the noise imprint (§6.5).
@@ -278,10 +279,18 @@ from the data errors**; the prior is adapted automatically (`Uniform`→`BoxUnif
 `num_simulations` is per round; `space` ('auto'|'flux'|'magnitude') matches the likelihood;
 `num_workers` parallelizes simulation.
 
-- **Input layout:** `x_format="value"` conditions on the data-space values alone; `"stacked"` on the
-  full observation tuple — `(value, error, time, band code)` channels concatenated per point, the same
-  information the likelihood-based samplers receive (and what an embedding net needs to exploit
-  cadence/noise structure).
+- **Input layout:** `x_format="value"` conditions on the data-space values alone; `"stacked"` appends
+  per-point error + time channels (the same information the likelihood-based samplers receive, so an
+  embedding net can exploit cadence/noise structure). The **band is not a channel**: every simulation is
+  drawn on the identical `(time, band)` grid as the observation, so band identity is already encoded by
+  position — a constant per-position channel would carry no information (and empirically hurt flux-space
+  fits; removing it improved recovery of the red kilonova opacity in the AT2017GFO application).
+- **Input normalisation:** `standardize_x` (default `True` → `"asinh"`; also `"zscore"` or
+  `"none"`/`False`) rescales the conditioning input before it reaches the estimator, with per-channel
+  statistics fitted on the first round's simulations and applied identically to the observation and
+  `result.format_x`. `"asinh"` (`asinh(x/scale)`) variance-stabilises wide dynamic ranges — essential
+  for flux-space data spanning several orders of magnitude, where sbi's built-in z-scoring fixes scale
+  but not skew.
 - **Density estimator + embeddings:** `density_estimator` is an estimator name **or** a pre-built
   `posterior_nn(...)` factory. **`embedding_net`** is `None`, a built-in name — **`"mlp"`** or
   **`"tcn"`** (Temporal Convolutional Network: dilated causal convolutions for time series; see
@@ -295,6 +304,18 @@ from the data errors**; the prior is adapted automatically (`Uniform`→`BoxUnif
   via `RestrictedPrior` + `get_density_thresholder(quantile=truncate_quantile)`; support estimated from
   `support_samples` draws — kept modest, since sbi's default 1e6 can take hours; rejection sampling makes
   it compute-heavy).
+- **Robust best-fit scan:** the post-fit max-likelihood scan (re-running the forward model on posterior
+  draws) runs in a process pool (`num_workers`) with a wall-clock cap `scan_timeout` [s], so an expensive
+  or occasionally-pathological model call cannot hang the fit — it degrades to scoring a smaller subset
+  instead.
+- **Robust final sampling:** conditioning a trained estimator on the *real* observation (as opposed to
+  simulated placeholders seen during training) can occasionally expose numerical pathologies sbi's
+  default rejection sampling doesn't handle gracefully — a near-zero acceptance rate (impractically slow
+  rather than an error) or a degenerate flow transform (`AssertionError` deep in `nflows`). Both are
+  detected (a bounded, hang-proof acceptance probe; an `AssertionError` catch) and fall back to
+  MCMC-based posterior sampling (`sample_with="mcmc"`, which conditions via `log_prob` instead of the
+  flow's inverse). `result.info["final_sample_method"]` records which path was used
+  (`"rejection"` or `"mcmc_fallback"`) and `["final_sample_acceptance_rate"]` the probed rate.
 
 - **Device (GPU):** `device` = `'cpu'` (default), `'cuda'`/`'gpu'`/`'cuda:N'`, or `'auto'` (CUDA when
   available, else CPU). The torch prior + observed data are placed on the device; a GPU request without

@@ -14,6 +14,6 @@ outputs/
 *.log
 
 # regenerable intermediate posterior samples / fit data (figures are kept; rerun the fit scripts to remake)
-docs/figures/*.npz
+docs/figures/**/*.npz
 .hypothesis/
 docs/figures/kilonova_bench_*.json

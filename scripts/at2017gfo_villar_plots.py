@@ -197,6 +197,55 @@ def plot(out, samplers, params, labels, bands):
     fig.savefig(os.path.join(out, "villar_ppc.png"), dpi=140, bbox_inches="tight")
     plt.close(fig)
 
+    # ---------------- PPC (zoomed grid): early light curve, one square panel per method -------------
+    # Complements villar_ppc.png (full range, stacked) with a square-panel GRID zoomed to the first
+    # ~10 days, where the two components pull apart fastest and band-to-band structure is easiest to
+    # read; larger fonts and bolder scatter markers keep it legible at a glance.
+    t_lo, t_hi = -1.0, 10.0
+    ncols = int(np.ceil(np.sqrt(len(ms))))
+    nrows = int(np.ceil(len(ms) / ncols))
+    panel = 4.6
+    fig, ax = plt.subplots(nrows, ncols, figsize=(panel * ncols, panel * nrows), squeeze=False)
+    tmask = (t >= t_lo) & (t < t_hi)
+    grid_mask = (ref["tgrid"] >= t_lo) & (ref["tgrid"] < t_hi)
+    med_zoom = np.concatenate([npz[m][f"curve_{b}"][1][grid_mask] for m in ms for b in bands])
+    y_bright_z = min(float(np.min((mag - err)[tmask])), float(np.percentile(med_zoom, 2))) - 0.3
+    y_faint_z = max(float(np.max((mag + err)[tmask])), float(np.percentile(med_zoom, 92))) + 0.3
+    for k, m in enumerate(ms):
+        a = ax[k // ncols][k % ncols]
+        d = npz[m]
+        for b in bands:
+            lo, med, hi = d[f"curve_{b}"]
+            a.fill_between(d["tgrid"], lo, hi, color=band_col[b], alpha=0.24, lw=0)
+            a.plot(d["tgrid"], med, color=band_col[b], lw=2.0, label=b if k == 0 else None)
+            sel = band == b
+            a.errorbar(t[sel], mag[sel], yerr=err[sel], fmt="o", ms=6.5, mfc=band_col[b],
+                       mec="black", mew=0.6, ecolor="black", elinewidth=0.9, capsize=2.0,
+                       alpha=0.9, zorder=5)
+        j = res[m]["ppc"]
+        a.set_xlim(t_lo, t_hi)
+        a.set_ylim(y_faint_z, y_bright_z)
+        a.set_facecolor("#f4f6f8")
+        a.grid(True, alpha=0.25, lw=0.6)
+        a.set_title(SHORT.get(m, samplers[m][0]), fontsize=17, weight="bold", pad=6)
+        a.tick_params(axis="both", labelsize=13, length=5)
+        a.text(0.03, 0.03, f"χ²/dof={j['chi2_reported']:.1f}  cov95={j['cov95']:.2f}",
+               transform=a.transAxes, ha="left", va="bottom", fontsize=11,
+               bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="0.7", alpha=0.85))
+        if k % ncols == 0:
+            a.set_ylabel("AB magnitude", fontsize=16)
+        if k // ncols == nrows - 1 or k + ncols >= len(ms):
+            a.set_xlabel("days since merger", fontsize=16)
+    for k in range(len(ms), nrows * ncols):                 # hide unused grid cells
+        ax[k // ncols][k % ncols].axis("off")
+    ax[0][0].legend(loc="upper right", ncol=min(len(bands), 4), fontsize=12, frameon=True,
+                    title="band (blue→red)", title_fontsize=12)
+    fig.suptitle(f"AT2017GFO posterior-predictive light curves — early time ({t_lo:g}–{t_hi:g} d), "
+                 f"{_bandlabel}", y=1.01, weight="bold", fontsize=19)
+    fig.tight_layout()
+    fig.savefig(os.path.join(out, "villar_ppc_grid.png"), dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
     # ---------------- summary: medians vs methods + runtime ---------------------------------------
     # short method tags (module-level SHORT) keep the runtime-bar labels off the left panel
     fig = plt.figure(figsize=(15.5, 5.4))
@@ -389,6 +438,11 @@ def _report(out, res, samplers, params, labels, ms):
               "and 95% coverage. MCMC gives the tightest, best-tracking band; the neural methods carry "
               "wider bands reflecting the marginal σ uncertainty.", "",
               f"![posterior-predictive light curves]({fig_dir}/villar_ppc.png)", "",
+              "### Posterior-predictive light curves — early time (zoom)", "",
+              "The same posterior-predictive check, zoomed to the first 10 days (where the two "
+              "components pull apart fastest) and laid out as one square panel per method for a "
+              "closer read of the band-by-band structure.", "",
+              f"![posterior-predictive light curves, early time]({fig_dir}/villar_ppc_grid.png)", "",
               "### Summary — medians & runtime", "",
               "Parameter medians ± 68% CI across methods, each normalised to the Villar+2017 value "
               "where available (dashed line = Villar+17), and the end-to-end wall time per method.", "",
