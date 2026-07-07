@@ -17,11 +17,26 @@ Two layouts:
 """
 from __future__ import annotations
 
+import shutil
+
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 
 _MARKER = {"det": "o", "lowsnr": "^", "ul": "v"}
 _SNR_LOW = 3.0
+
+
+def _safe_usetex():
+    """Disable matplotlib's LaTeX text rendering when no ``latex`` executable is available.
+
+    Some optional backends (notably **redback**) enable ``text.usetex`` globally on import, which then
+    makes every subsequent plot crash with ``RuntimeError: ... latex could not be found`` on systems
+    without a TeX install. Called at the start of each plot function, this resets the flag only when
+    LaTeX is genuinely missing — a user with a working TeX keeps ``usetex=True`` untouched.
+    """
+    if matplotlib.rcParams.get("text.usetex") and shutil.which("latex") is None:
+        matplotlib.rcParams["text.usetex"] = False
 
 
 def _band_colors(bands):
@@ -85,6 +100,7 @@ def plot_light_curve(lc, *, layout="report", quantity="apparent_mag", bands=None
 
     See the module docstring for layouts, the ``quantity`` options, and the marker conventions.
     """
+    _safe_usetex()
     if bands is not None:
         lc = lc.select_bands(bands)
     full = lc.add_flux().add_mag()      # ensure both magnitude and flux are available
@@ -221,6 +237,7 @@ def plot_ppc(results, lc, model=None, *, quantity="apparent_mag", panel_by="auto
     else:
         quantity, invert = "apparent_mag", True
 
+    _safe_usetex()
     if hasattr(results, "samples"):                            # a single SamplerResult
         fits = {getattr(results, "sampler", "fit"): results}
     elif isinstance(results, dict):
@@ -314,6 +331,7 @@ def plot_calibration(results, lc, model=None, *, levels=(0.5, 0.68, 0.8, 0.9, 0.
     """
     from .metrics import predictive_metrics
 
+    _safe_usetex()
     if hasattr(results, "samples"):
         fits = {getattr(results, "sampler", "fit"): results}
     elif isinstance(results, dict):
@@ -430,6 +448,7 @@ def plot_corner(posteriors, *, labels=None, parameters=None, colors=None, truths
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
+    _safe_usetex()
     if not len(posteriors):
         raise ValueError("plot_corner needs at least one posterior.")
     frames, auto_labels = [], []

@@ -5,6 +5,13 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Fix: plots no longer crash after importing redback (LaTeX rendering)
+- **redback** enables matplotlib's `text.usetex` globally on import, which made every subsequent
+  WHISPER plot crash with `RuntimeError: ... latex could not be found` on systems without a TeX
+  install. Each plotting function now calls a small `_safe_usetex()` guard that resets the flag
+  **only when `latex` is genuinely missing** (a user with a working TeX keeps `usetex=True`). Fixes the
+  order-dependent `test_plotting` failures and the model-comparison notebook's corner plot.
+
 ### Band lookup: ZTF-prefixed names + case-insensitive aliases
 - **`ZTF_g` / `ZTF_r` / `ZTF_i` / `ZTF_z`** (and `ztf_g`-style / mixed-case variants) now resolve to the
   LSST g/r/i/z bands — added to `FILTER_LOOKUP` and `DEFAULT_BAND_ALIASES`, so their effective wavelength
