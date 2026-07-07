@@ -88,3 +88,46 @@ def test_plot_corner_common_params_log_and_errors():
     plt.close(fig2)
     with pytest.raises(ValueError):
         wp.plot_corner([])
+
+
+def _ppc_setup():
+    import numpy as np
+    from whisper_labia import LightCurve, Prior, Uniform, fit_ABC, get_model
+    m = get_model("gaussian_rise")
+    truth = {"amplitude": 5.0, "t0": 8.0, "sigma_rise": 3.0, "tau_decay": 15.0}
+    t = np.linspace(0.1, 30, 40)
+    times = np.concatenate([t, t])
+    bands = np.array(["g"] * 40 + ["r"] * 40)
+    flux = m.predict(truth, times, bands)
+    lc = LightCurve(time=times, band=bands, flux=flux + np.random.default_rng(0).normal(0, 0.1, 80),
+                    flux_err=np.full_like(flux, 0.1), name="syn")
+    prior = Prior({k: Uniform(0.5 * v, 1.5 * v) for k, v in truth.items()})
+    res = fit_ABC(lc, "gaussian_rise", prior=prior, n_simulations=2000, quantile=0.05, n_jobs=1, seed=0)
+    return lc, res
+
+
+def test_plot_ppc_single_flux_grid_by_band():
+    from whisper_labia import plot_ppc
+    lc, res = _ppc_setup()
+    fig = plot_ppc(res, lc, quantity="flux")            # single fit -> panel per band
+    assert len(fig.axes) >= 2                            # g + r panels
+    plt.close(fig)
+
+
+def test_plot_ppc_multi_method_magnitude():
+    from whisper_labia import plot_ppc
+    lc, res = _ppc_setup()
+    fig = plot_ppc({"a": res, "b": res}, lc, quantity="apparent_mag")   # per-method grid, mag axis
+    assert len(fig.axes) >= 2
+    # magnitude panels are inverted (brighter=up): ylim descends
+    ax = fig.axes[0]
+    assert ax.get_ylim()[0] > ax.get_ylim()[1]
+    plt.close(fig)
+
+
+def test_plot_ppc_panel_by_band_override():
+    from whisper_labia import plot_ppc
+    lc, res = _ppc_setup()
+    fig = plot_ppc({"a": res, "b": res}, lc, panel_by="band", quantity="flux")
+    assert len(fig.axes) >= 2
+    plt.close(fig)

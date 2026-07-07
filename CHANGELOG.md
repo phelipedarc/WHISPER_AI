@@ -5,6 +5,27 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Per-band goodness-of-fit + posterior-predictive grid plot
+- **`per_band_metrics(lc, model, params, *, space, fixed)`** (`whisper_labia.metrics`) — per-band and
+  overall **MSE / RMSE / MAE** of the best-fit residuals in the fit's comparison space (Jy for flux,
+  mag for magnitude). **Every sampler** now computes it at its best fit and stores it in
+  `result.info["band_metrics"]`, so it is written to `SamplerResult.to_json()` automatically — the
+  per-band error is part of the standard fit output.
+- **`plot_ppc(results, lc, model=None, *, quantity="apparent_mag"|"flux", panel_by="method"|"band"|"auto", ...)`**
+  (`whisper_labia.plotting`) — the grid posterior-predictive-check plot (previously bespoke to the
+  AT2017GFO study) is now a first-class feature: 95% predictive band + median over the data, one panel
+  per fit (bands overlaid) or one panel per band (fits overlaid), in **magnitude or flux** space. Takes
+  one `SamplerResult`, a `{label: result}` dict, or a list.
+
+### Tutorial notebooks
+- **`notebooks/`** — five hands-on Jupyter tutorials covering the main functionality, executed with
+  embedded outputs: **1** light curves (`load_lightcurve`, SNR cuts, band selection, magnitude↔flux,
+  phase, plotting), **2** models (built-ins, `predict`, the redback kilonova, `register_model`),
+  **3** samplers (`fit_ABC`/`fit_ABC_SMC`/`fit_MCMC`/`fit_SNPE`, `SamplerResult`, AIC/BIC), **4**
+  visualizing results (`plot_corner`, `recovery_metrics`, `waic`), and **5** a full Bayesian model
+  comparison — AT2017GFO fit with one/two/three-component kilonova models × ABC/SNPE/MCMC, ranked by
+  AIC/BIC. Cells are generated from `notebooks/_build_notebooks.py`; linked from the README.
+
 ### Repository reorganization — analysis / benchmarks / dev separated from the package
 - **`analysis/at2017gfo_villar/`** now holds the full AT2017GFO Villar+17 study — `villar.py`,
   `villar_plots.py`, `fetch_at2017gfo_full.py`, `preprocess_at2017gfo.py`, `runtime_plot.py`, plus its

@@ -25,7 +25,7 @@ import pandas as pd
 
 from ..likelihood import make_likelihood
 from ..models import get_model
-from .base import BaseSampler, SamplerResult, summarize_posterior
+from .base import BaseSampler, SamplerResult, attach_band_metrics, summarize_posterior
 
 
 def _log_prob(theta, names, prior, predict, times, bands, likelihood, scatter_name=None):
@@ -187,6 +187,7 @@ class MCMCSampler(BaseSampler):
             "mean_autocorr_time": autocorr, "n_samples_per_walker": int(flat.shape[0] // nwalkers),
             "converged": bool(converged), "seed": int(seed),
         }
+        attach_band_metrics(info, lc, model.name, best_params, space)
         result = SamplerResult(
             sampler="mcmc", model=model.name, parameters=list(names), samples=samples,
             summary=summarize_posterior(samples, names), best_params=best_params,

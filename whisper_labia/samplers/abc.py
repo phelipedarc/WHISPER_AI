@@ -19,7 +19,7 @@ import warnings
 from ..distance import chi2_distance, get_distance
 from ..likelihood import make_likelihood
 from ..models import get_model
-from .base import BaseSampler, SamplerResult, summarize_posterior
+from .base import BaseSampler, SamplerResult, attach_band_metrics, summarize_posterior
 
 
 def _simulate_batch(predict, prior, distance, times, bands, obs_y, obs_err, indices, seed,
@@ -211,6 +211,7 @@ class ABCSampler(BaseSampler):
             "distance": getattr(distance, "__name__", str(distance)),
             "likelihood_space": lik.space,
         }
+        attach_band_metrics(info, lc, model.name, best, space)
         return SamplerResult(
             sampler="abc", model=model.name, parameters=names,
             samples=samples, summary=summarize_posterior(samples, names),

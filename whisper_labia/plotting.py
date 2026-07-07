@@ -141,6 +141,161 @@ def plot_light_curve(lc, *, layout="report", quantity="apparent_mag", bands=None
     return fig
 
 
+# --- posterior-predictive check --------------------------------------------------------------------
+
+_AB_ZP_JY = 3631.0
+
+
+def _flux_to_quantity(flux, quantity):
+    """Map model flux density [Jy] to the plotted quantity."""
+    if quantity in ("flux", "flux_density"):
+        return np.asarray(flux, float)
+    return -2.5 * np.log10(np.clip(np.asarray(flux, float), 1e-300, None) / _AB_ZP_JY)   # AB mag
+
+
+def _ppc_curves(result, model, tgrid, band_list, quantity, n_draws, seed):
+    """Posterior-predictive percentile curves (2.5/50/97.5) per band over ``tgrid``."""
+    from .models import get_model
+
+    m = get_model(model if model is not None else getattr(result, "model", None))
+    if m is None:
+        raise ValueError("plot_ppc needs a model (pass model=... or use a result with .model).")
+    samples = result.samples
+    cols = [c for c in m.parameters if c in samples.columns]
+    draws = samples[cols].to_numpy(dtype=float)
+    idx = np.random.default_rng(seed).choice(
+        len(draws), size=min(n_draws, len(draws)), replace=len(draws) < n_draws)
+    curves = {}
+    for b in band_list:
+        gb = np.array([b] * len(tgrid))
+        stack = np.empty((len(idx), len(tgrid)), dtype=float)
+        for i, j in enumerate(idx):
+            p = {c: float(draws[j, k]) for k, c in enumerate(cols)}
+            stack[i] = _flux_to_quantity(np.asarray(m.predict(p, tgrid, gb), float), quantity)
+        curves[b] = np.nanpercentile(stack, [2.5, 50, 97.5], axis=0)
+    return curves
+
+
+def plot_ppc(results, lc, model=None, *, quantity="apparent_mag", panel_by="auto", n_draws=200,
+             bands=None, tmin=None, tmax=None, ncols=None, colors=None, figsize=None, title=None,
+             seed=0, save=None):
+    """Posterior-predictive check: model band(s) over the data, in a **grid** of panels.
+
+    For each fit, draws ``n_draws`` posterior samples, evaluates the model on a smooth time grid, and
+    shades the **95% posterior-predictive band** (2.5–97.5 percentiles) with the median curve, over the
+    observed photometry — per band. Two panel layouts:
+
+    * ``panel_by='method'`` — one panel per fit, all bands overlaid (band-coloured); this is the
+      multi-sampler grid (as used for the AT2017GFO study).
+    * ``panel_by='band'`` — one panel per band, all fits overlaid (fit-coloured).
+
+    ``'auto'`` picks ``'method'`` when several fits are given, else ``'band'``.
+
+    Parameters
+    ----------
+    results : SamplerResult | dict[str, SamplerResult] | list[SamplerResult]
+        One or more fits. A dict keys the panels/legend by label; a list uses each result's sampler name.
+    lc : LightCurve
+        The observed data (its ``time`` / ``band`` grid and the plotted photometry).
+    model : str | Model, optional
+        Forward model; defaults to each result's ``.model``.
+    quantity : str
+        ``'apparent_mag'`` (default, inverted axis) or ``'flux'`` (flux density [Jy]).
+    panel_by : str
+        ``'auto'`` | ``'method'`` | ``'band'``.
+    n_draws : int
+        Posterior draws per fit used to build the predictive band.
+    bands : list, optional
+        Restrict to these bands (default: all bands in ``lc``, blue→red order preserved).
+    tmin, tmax : float, optional
+        Time-axis limits (data units); the predictive grid spans this range.
+    ncols : int, optional
+        Grid columns (default: near-square).
+    colors : dict, optional
+        Override colours — by band (``panel_by='method'``) or by fit label (``panel_by='band'``).
+
+    Returns the matplotlib ``Figure``.
+    """
+    if quantity.lower() in ("flux", "flux_density"):
+        quantity, invert = "flux", False
+    else:
+        quantity, invert = "apparent_mag", True
+
+    if hasattr(results, "samples"):                            # a single SamplerResult
+        fits = {getattr(results, "sampler", "fit"): results}
+    elif isinstance(results, dict):
+        fits = dict(results)
+    else:
+        fits = {getattr(r, "sampler", f"fit{i}"): r for i, r in enumerate(results)}
+    if panel_by == "auto":
+        panel_by = "method" if len(fits) > 1 else "band"
+
+    full = lc.add_flux().add_mag() if bands is None else \
+        lc.select_bands(bands).add_flux().add_mag()
+    band_list = list(bands) if bands is not None else full.bands
+    t = np.asarray(full.time, float)
+    obs_band = np.asarray(full.band).astype(str)
+    obs_y = np.asarray(full.flux if quantity == "flux" else full.magnitude, float)
+    obs_e = np.asarray((full.flux_err if quantity == "flux" else full.magnitude_err), float)
+    lo_t = float(np.min(t)) if tmin is None else float(tmin)
+    hi_t = float(np.max(t)) if tmax is None else float(tmax)
+    tgrid = np.linspace(max(lo_t, 1e-3), hi_t, 120)
+
+    curves = {lbl: _ppc_curves(r, model, tgrid, band_list, quantity, n_draws, seed)
+              for lbl, r in fits.items()}
+    band_col = _band_colors(band_list) if colors is None or panel_by == "method" else None
+    if panel_by == "method" and colors is not None:
+        band_col = {**band_col, **colors}
+    fit_col = colors if (colors is not None and panel_by == "band") else \
+        {lbl: CORNER_PALETTE[i % len(CORNER_PALETTE)] for i, lbl in enumerate(fits)}
+
+    panels = list(fits) if panel_by == "method" else band_list
+    ncols = ncols or int(np.ceil(np.sqrt(len(panels))))
+    nrows = int(np.ceil(len(panels) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize or (4.6 * ncols, 3.6 * nrows),
+                             squeeze=False, sharex=True, sharey=True)
+    axflat = axes.ravel()
+    ylabel = "flux density [Jy]" if quantity == "flux" else "apparent magnitude (AB)"
+
+    for ax, panel in zip(axflat, panels):
+        if panel_by == "method":
+            for b in band_list:
+                lo, med, hi = curves[panel][b]
+                ax.fill_between(tgrid, lo, hi, color=band_col[b], alpha=0.22, lw=0)
+                ax.plot(tgrid, med, color=band_col[b], lw=1.8, label=b)
+                sel = obs_band == b
+                ax.errorbar(t[sel], obs_y[sel], yerr=None if obs_e is None else obs_e[sel],
+                            fmt="o", ms=5, mfc=band_col[b], mec="black", mew=0.5,
+                            ecolor="black", elinewidth=0.7, alpha=0.9, zorder=5)
+            ax.set_title(panel, fontsize=13, weight="bold")
+        else:                                                  # panel_by == 'band'
+            b = panel
+            for lbl, r in fits.items():
+                lo, med, hi = curves[lbl][b]
+                ax.fill_between(tgrid, lo, hi, color=fit_col[lbl], alpha=0.18, lw=0)
+                ax.plot(tgrid, med, color=fit_col[lbl], lw=1.8, label=lbl)
+            sel = obs_band == b
+            ax.errorbar(t[sel], obs_y[sel], yerr=None if obs_e is None else obs_e[sel],
+                        fmt="o", ms=5, mfc="0.2", mec="black", mew=0.5, ecolor="0.4",
+                        elinewidth=0.7, alpha=0.9, zorder=5)
+            ax.set_title(b, fontsize=13, weight="bold")
+        ax.grid(alpha=0.25)
+    if invert and len(panels):
+        axflat[0].invert_yaxis()               # sharey=True -> inverting one inverts all (invert once)
+    for ax in axflat[len(panels):]:
+        ax.set_visible(False)
+    axflat[0].legend(fontsize=9, frameon=True,
+                     title="band" if panel_by == "method" else "fit")
+    fig.supxlabel(_time_label(full))
+    fig.supylabel(ylabel)
+    fig.suptitle(title or f"Posterior-predictive check — {full.name or lc.name or 'light curve'}",
+                 weight="bold")
+    fig.tight_layout()
+    if save is not None:
+        fig.savefig(save, dpi=140, bbox_inches="tight")
+    return fig
+
+
 # --- corner plot -----------------------------------------------------------------------------------
 
 #: Dark, distinct, print-friendly palette for overlaying posteriors (dark blue, dark red, dark green,

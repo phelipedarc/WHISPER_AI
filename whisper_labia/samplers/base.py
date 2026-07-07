@@ -26,6 +26,20 @@ def summarize_posterior(samples, parameters):
     return summary
 
 
+def attach_band_metrics(info, lc, model, best_params, space):
+    """Populate ``info['band_metrics']`` with per-band MSE/MAE at the best fit (best-effort).
+
+    Shared by every sampler so the per-band goodness-of-fit lands in ``SamplerResult.to_json``.
+    Wrapped in a broad guard — a metric failure (e.g. a slow/failing forward model) must never
+    break an otherwise-successful fit.
+    """
+    try:
+        from ..metrics import per_band_metrics
+        info["band_metrics"] = per_band_metrics(lc, model, best_params, space=space)
+    except Exception:
+        pass
+
+
 @dataclass
 class SamplerResult:
     """Unified result for every Whisper sampler.

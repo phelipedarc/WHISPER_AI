@@ -110,3 +110,58 @@ def waic(posterior, lc, model=None, *, space="auto", likelihood="auto", fixed=No
     return {"waic": float(-2.0 * np.sum(elpd_i)), "lppd": float(np.sum(lppd_i)),
             "p_waic": float(np.sum(p_waic_i)), "se": se, "n_samples": int(n_samp), "n_data": int(n_data),
             "n_draws_dropped": n_dropped, "subsampled": bool(subsampled)}
+
+
+def per_band_metrics(lc, model, params, *, space="auto", fixed=None):
+    """Per-band goodness-of-fit residual metrics at a single parameter set (e.g. the best fit).
+
+    Evaluates ``model`` at ``params`` on the observed ``(time, band)`` grid and, **per band**, reports
+    the mean-squared error (MSE), root-mean-squared error (RMSE) and mean-absolute error (MAE) of the
+    residuals ``observed - model``, computed in the Gaussian likelihood's **comparison space** — flux
+    density [Jy] for a flux fit, apparent magnitude [mag] for a magnitude fit — so the metric matches
+    the space the fit actually optimised. This is the deterministic point-estimate complement to the
+    distributional :func:`waic` / posterior-predictive checks.
+
+    Parameters
+    ----------
+    lc : LightCurve
+        The observed data.
+    model : str | Model
+        Model name or object (its ``predict`` is called once at ``params``).
+    params : dict
+        Parameter values — typically ``result.best_params``. Only the model's own parameters are used;
+        extra keys (e.g. a likelihood scatter term) are ignored.
+    space : str
+        ``'auto'`` | ``'flux'`` | ``'magnitude'`` — the residual space (default follows the data mode).
+    fixed : dict, optional
+        Parameters held fixed during the fit and absent from ``params`` (merged in before predicting).
+
+    Returns
+    -------
+    dict
+        ``{"space", "unit", "bands": {band: {"mse","rmse","mae","n"}}, "overall": {...}}``.
+        ``unit`` is ``"Jy"`` (flux) or ``"mag"`` (magnitude).
+    """
+    from .likelihood import GaussianLikelihood
+
+    m = get_model(model)
+    if m is None:
+        raise ValueError(f"Unknown model {model!r}.")
+    lik = GaussianLikelihood(lc, space=space)
+    times = np.asarray(lc.time, dtype=float)
+    bands = np.asarray(lc.band).astype(str)
+    p = dict(fixed or {})
+    p.update({k: float(params[k]) for k in m.parameters if k in params})     # model params only
+    model_flux = np.asarray(m.predict(p, times, bands), dtype=float)
+    resid = np.asarray(lik.y, float) - np.asarray(lik.model_in_space(model_flux), float)
+
+    def _stats(r):
+        r = r[np.isfinite(r)]
+        if r.size == 0:
+            return {"mse": float("nan"), "rmse": float("nan"), "mae": float("nan"), "n": 0}
+        mse = float(np.mean(r ** 2))
+        return {"mse": mse, "rmse": float(np.sqrt(mse)), "mae": float(np.mean(np.abs(r))), "n": int(r.size)}
+
+    per_band = {str(b): _stats(resid[bands == b]) for b in np.unique(bands)}
+    unit = "mag" if lik.space == "magnitude" else "Jy"
+    return {"space": lik.space, "unit": unit, "bands": per_band, "overall": _stats(resid)}

@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 
 from ..models import get_model
-from .base import BaseSampler, SamplerResult, summarize_posterior
+from .base import BaseSampler, SamplerResult, attach_band_metrics, summarize_posterior
 
 
 def _snpe_logl_worker(args):
@@ -631,6 +631,7 @@ class SNPESampler(BaseSampler):
             "space": lik.space, "num_samples": int(num_samples), "device": str(device),
             "seed": int(seed), "num_workers": int(num_workers),
         }
+        attach_band_metrics(info, lc, model.name, best_params, space)
         result = SamplerResult(
             sampler="snpe", model=model.name, parameters=list(param_names), samples=samples,
             summary=summarize_posterior(samples, param_names), best_params=best_params,

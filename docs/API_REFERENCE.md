@@ -11,8 +11,8 @@ axes (models, samplers, likelihoods, distances) with the ABC / ABC-SMC / MCMC / 
 ```
 whisper_labia/
   __init__.py          # public API exports
-  plotting.py          # plot_light_curve, plot_corner
-  metrics.py           # waic (Widely Applicable Information Criterion)
+  plotting.py          # plot_light_curve, plot_ppc, plot_corner
+  metrics.py           # waic (Widely Applicable Information Criterion), per_band_metrics
   validation.py        # recovery_metrics, posterior_predictive_check, sbc_rank, sbc_ranks
   priors.py            # Uniform, LogUniform, Prior
   distance.py          # chi2_distance
@@ -23,7 +23,7 @@ whisper_labia/
 ```
 
 Top-level (`import whisper_labia as wp`): `LightCurve`, `load_lightcurve`, `plot_light_curve`,
-`plot_corner`, `CORNER_PALETTE`, `waic`, `recovery_metrics`, `posterior_predictive_check`, `sbc_rank`,
+`plot_ppc`, `plot_corner`, `CORNER_PALETTE`, `waic`, `per_band_metrics`, `recovery_metrics`, `posterior_predictive_check`, `sbc_rank`,
 `sbc_ranks`, `group_bands`, `FILTER_LOOKUP`, `resolve_band`, `resolve_bands`, `LSST_BAND_INFO`, `SvoUnavailable`,
 `register_manual_band`, `unregister_manual_band`, `clear_manual_bands`, `Prior`, `Uniform`, `LogUniform`,
 `Model`, `register_model`, `get_model`, `list_models`, `chi2_distance`, `register_distance`,
@@ -124,6 +124,14 @@ applies the documented per-mode default.
 **`plot_light_curve(lc, *, layout="report", quantity="apparent_mag", bands=None, ncols=3, figsize=None, title=None, save=None)`**
 — `layout`: `"report"` (mag + flux panels) or `"grid"` (per band). `quantity`: `apparent_mag` /
 `absolute_mag` (needs redshift) / `flux`. Markers: detections = circles, SNR<3 = △, upper limits = ▽.
+
+**`plot_ppc(results, lc, model=None, *, quantity="apparent_mag", panel_by="auto", n_draws=200, bands=None, tmin=None, tmax=None, ncols=None, colors=None, figsize=None, title=None, seed=0, save=None)`**
+— **posterior-predictive check as a grid.** For each fit, draws `n_draws` posterior samples, evaluates
+the model on a smooth time grid, and shades the **95% predictive band** (2.5–97.5 percentiles) + median
+over the photometry, per band. `results` is one `SamplerResult`, a `{label: SamplerResult}` dict, or a
+list. `panel_by`: `"method"` (one panel per fit, bands overlaid — the multi-sampler grid),
+`"band"` (one panel per band, fits overlaid), or `"auto"` (method when several fits, else band).
+`quantity`: `"apparent_mag"` (inverted axis) or `"flux"` (flux density [Jy]). Returns the `Figure`.
 
 **`plot_corner(posteriors, *, labels=None, parameters=None, colors=None, truths=None, bins=30,
 levels=(0.39, 0.86), smooth=1.0, log_params=None, title=None, legend_loc="upper right", save=None, **corner_kwargs)`**
@@ -329,8 +337,10 @@ sbi posterior is attached as `result.posterior` (and `result.posteriors` per rou
 
 **`SamplerResult`** fields: `sampler`, `model`, `parameters`, `samples` (DataFrame of accepted draws
 + `distance`), `summary` (median/ci16/ci84/mean/std per param), `best_params`, `n_data`, `n_params`,
-`runtime_s`, `info` (n_simulations, n_accepted, acceptance_rate, epsilon, quantile, n_jobs),
-`min_distance`, `max_log_likelihood`, `aic`, `bic`. Methods: `n_samples`, `to_dict()`, `to_json(path=None)`.
+`runtime_s`, `info` (n_simulations, n_accepted, acceptance_rate, epsilon, quantile, n_jobs, **and
+`band_metrics`** — per-band MSE/RMSE/MAE at the best fit, see §6.6), `min_distance`,
+`max_log_likelihood`, `aic`, `bic`. Methods: `n_samples`, `to_dict()`, `to_json(path=None)` — every
+field above (`band_metrics` included) is serialised to the JSON.
 
 > Metrics note: for the χ² distance, `chi2 = -2 ln L` (Gaussian), so `max_log_likelihood = -0.5·χ²_min`,
 > `AIC = χ²_min + 2k`, `BIC = χ²_min + k·ln(n)`.
@@ -387,6 +397,14 @@ Note `p_waic` (and hence WAIC) inflates for posteriors much broader than the lik
 tolerance posterior or an under-converged SNPE run — which is itself a useful diagnostic; magnitude space
 is numerically gentler than flux space (whose tiny errors make the likelihood very sharp).
 
+**`per_band_metrics(lc, model, params, *, space="auto", fixed=None)`** — deterministic **per-band
+goodness of fit** at a single parameter set (typically `result.best_params`). Evaluates the model once
+and reports, **per band** and overall, the `mse` / `rmse` / `mae` of the residuals `observed − model`
+in the fit's comparison space (`"flux"` → Jy, `"magnitude"` → mag). Returns
+`{"space", "unit", "bands": {band: {"mse","rmse","mae","n"}}, "overall": {...}}`. Every sampler calls
+this at its best fit and stores the result in `result.info["band_metrics"]`, so it is reported in
+`to_json()` automatically — no extra call needed for the standard fit output.
+
 ### 6.7 Validation — recovery, PPC, SBC  (`whisper_labia.validation`)
 
 Sampler-agnostic checks that a fit **recovered the truth** with **reliable uncertainties** (used by
@@ -435,7 +453,7 @@ Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `dev/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (205 tests, all passing)
+## 8. Test coverage (212 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -443,8 +461,8 @@ Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`
 | `test_bands.py` | 11 | Aliases, case-sensitivity, `group_bands`/`FILTER_LOOKUP`, `unmapped_bands`. |
 | `test_schema.py` | 11 | Validation, subsetting, `add_*`, `snr`/`select_snr`, `set_explosion_date`, upper limits. |
 | `test_loader.py` | 12 | AT2017GFO load, window/subset, grouping, `min_snr`, `explosion_date`, upper limits. |
-| `test_plotting.py` | 7 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers; `plot_corner` overlay/legend, common-params + log axes + array/empty errors. |
-| `test_metrics.py` | 4 | WAIC keys + finite + better-fit-lower ordering, `fixed=`/subsampling, and pointwise log-lik (Gaussian + upper-limits) summing to the total. |
+| `test_plotting.py` | 10 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers; `plot_corner` overlay/legend, common-params + log axes + array/empty errors; `plot_ppc` single/multi × flux/magnitude × panel-by band/method. |
+| `test_metrics.py` | 7 | WAIC keys + finite + better-fit-lower ordering, `fixed=`/subsampling, pointwise log-lik (Gaussian + upper-limits) summing to the total; `per_band_metrics` zero-at-truth, offset detection, and auto-attachment to `result.info['band_metrics']`/JSON. |
 | `test_validation.py` | 4 | recovery z-score + coverage signs, PPC (reduced χ²≈1, predictive coverage, p≈0.5), SBC rank uniformity (calibrated vs edge-biased), `sbc_rank` bounds. |
 | `test_embeddings.py` | 6 | MLP/TCN embedding shapes + finite output, TCN receptive field covers the input, `build_embedding` dispatch + unknown-name error, `x_format` validation, ABC `simulate_noise` (n_jobs-reproducible, optional, noisy-vs-noiseless distance floor). |
 | `test_scatter.py` | 4 | Villar+17 scatter likelihood (formula vs hand calc, σ=0 reduces to Gaussian, pointwise sums, registry), MCMC recovers injected extra scatter (σ counted in AIC), ABC scatter validation + posterior column, ABC magnitude-space acceptance. |

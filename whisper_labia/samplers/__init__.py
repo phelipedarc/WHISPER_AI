@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from .abc import ABCSampler, fit_ABC
 from .abc_smc import ABCSMCSampler, fit_ABC_SMC
-from .base import BaseSampler, SamplerResult, summarize_posterior
+from .base import BaseSampler, SamplerResult, attach_band_metrics, summarize_posterior
 from .mcmc import MCMCSampler, fit_MCMC
 from .snpe import SNPESampler, fit_SNPE
 

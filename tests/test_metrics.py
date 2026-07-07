@@ -65,3 +65,49 @@ def test_waic_fixed_parameters_and_subsampling():
     w = wp.waic(df, lc, "gaussian_rise", space="flux", fixed={"tau_decay": 15.0},
                 max_samples=120, seed=0)
     assert np.isfinite(w["waic"]) and w["n_samples"] == 120
+
+
+def test_per_band_metrics_zero_at_truth_and_keys():
+    """At the exact truth the residuals vanish (MSE/MAE ~ 0); output has per-band + overall stats."""
+    m = get_model("gaussian_rise")
+    t = np.linspace(0.1, 30, 40)
+    times = np.concatenate([t, t])
+    bands = np.array(["g"] * 40 + ["r"] * 40)
+    flux = m.predict(TRUE, times, bands)
+    lc = wp.LightCurve(time=times, band=bands, flux=flux,
+                       flux_err=np.full_like(flux, 0.1), name="syn")
+    pbm = wp.per_band_metrics(lc, "gaussian_rise", TRUE, space="flux")
+    assert pbm["space"] == "flux" and pbm["unit"] == "Jy"
+    assert set(pbm["bands"]) == {"g", "r"}
+    for b in ("g", "r"):
+        assert pbm["bands"][b]["n"] == 40
+        assert pbm["bands"][b]["mse"] < 1e-12 and pbm["bands"][b]["mae"] < 1e-6
+        assert pbm["bands"][b]["rmse"] == pytest.approx(pbm["bands"][b]["mse"] ** 0.5)
+    assert pbm["overall"]["n"] == 80
+
+
+def test_per_band_metrics_detects_offset():
+    """A constant flux offset raises MAE by ~that offset (per band and overall)."""
+    m = get_model("gaussian_rise")
+    t = np.linspace(0.1, 30, 40)
+    flux = m.predict(TRUE, t, None)
+    lc = wp.LightCurve(time=t, band=["r"] * 40, flux=flux + 0.5,   # data 0.5 Jy brighter than model
+                       flux_err=np.full_like(flux, 0.1), name="syn")
+    pbm = wp.per_band_metrics(lc, "gaussian_rise", TRUE, space="flux")
+    assert pbm["bands"]["r"]["mae"] == pytest.approx(0.5, abs=1e-6)
+
+
+def test_fit_reports_band_metrics_in_json():
+    """Every sampler attaches info['band_metrics'], so it lands in to_json/to_dict."""
+    import json
+    m = get_model("gaussian_rise")
+    t = np.linspace(0.1, 30, 40)
+    flux = m.predict(TRUE, t, None)
+    lc = wp.LightCurve(time=t, band=["r"] * 40, flux=flux + np.random.default_rng(0).normal(0, 0.1, 40),
+                       flux_err=np.full_like(flux, 0.1), name="syn")
+    prior = wp.Prior({k: wp.Uniform(0.5 * v, 1.5 * v) for k, v in TRUE.items()})
+    res = wp.fit_ABC(lc, "gaussian_rise", prior=prior, n_simulations=2000, quantile=0.05,
+                     n_jobs=1, seed=0)
+    assert "band_metrics" in res.info
+    bm = json.loads(res.to_json())["info"]["band_metrics"]
+    assert "r" in bm["bands"] and bm["bands"]["r"]["n"] == 40

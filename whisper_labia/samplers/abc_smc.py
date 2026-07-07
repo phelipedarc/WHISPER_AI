@@ -35,7 +35,7 @@ from scipy.special import logsumexp
 from ..distance import chi2_distance, get_distance
 from ..likelihood import make_likelihood
 from ..models import get_model
-from .base import BaseSampler, SamplerResult, summarize_posterior
+from .base import BaseSampler, SamplerResult, attach_band_metrics, summarize_posterior
 
 #: Floor on a parameter's perturbation std so a fixed/zero-variance parameter still has a valid kernel.
 _PERTURB_FLOOR = 1e-12
@@ -331,6 +331,7 @@ class ABCSMCSampler(BaseSampler):
             "n_jobs": int(n_jobs), "distance": getattr(distance, "__name__", str(distance)),
             "likelihood_space": lik_space.space,
         }
+        attach_band_metrics(info, lc, model.name, best, space)
         return SamplerResult(
             sampler="abc_smc", model=model.name, parameters=params,
             samples=samples, summary=summarize_posterior(samples, params), best_params=best,
