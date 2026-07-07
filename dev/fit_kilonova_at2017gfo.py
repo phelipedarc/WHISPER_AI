@@ -8,11 +8,11 @@ for the blue + red components). The package-level model is used directly (pickla
 
 Usage (run the three samplers in parallel, then plot)::
 
-    python scripts/fit_kilonova_at2017gfo.py abc &
-    python scripts/fit_kilonova_at2017gfo.py mcmc &
-    python scripts/fit_kilonova_at2017gfo.py snpe &
+    python dev/fit_kilonova_at2017gfo.py abc &
+    python dev/fit_kilonova_at2017gfo.py mcmc &
+    python dev/fit_kilonova_at2017gfo.py snpe &
     wait
-    python scripts/fit_kilonova_at2017gfo.py plot
+    python dev/fit_kilonova_at2017gfo.py plot
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from whisper_labia.models import get_model
 from whisper_labia.priors import Prior, Uniform
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIGDIR = os.path.join(HERE, "docs", "figures")
+FIGDIR = os.path.join(HERE, "dev", "figures")
 DATA = os.path.join(HERE, "tests", "data", "at2017gfo.csv")
 Z_AT = 0.00984
 T_FLOOR = 2500.0

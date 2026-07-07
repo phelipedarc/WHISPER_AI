@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Villar+2017-style two-component kilonova fit of AT2017GFO with every WHISPER sampler.
 
-The real-world companion of ``scripts/sanity_check.py``: the redback ``two_component_kilonova``
+The real-world companion of ``sanity_check/sanity_check.py``: the redback ``two_component_kilonova``
 model with **kappa_blue fixed at 0.5 cm^2/g** (lanthanide-poor wind) and redshift fixed at the known
 z=0.00984, leaving 7 free physical parameters — M_ej, v_ej and the temperature floor of each
 component plus kappa_red — and, for the likelihood-based and neural methods, the **free extra-scatter
@@ -38,16 +38,24 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # VILLAR_FULL=1 -> full UV-optical-NIR dataset (11 bands spanning Swift-UV to 2MASS-Ks); default is the
 # g/r/i-only reduction. TMAX_DAYS restricts the light curve to the early kilonova (0-30 d rest of decay).
 FULL = os.environ.get("VILLAR_FULL") == "1"
+# VILLAR_PREPROCESS=1 -> the cleaned UVOIR reduction (scripts/preprocess_at2017gfo.py): Swift-UVOT
+# uvw1 dropped, SNR>5 (was >=3), and near-simultaneous multi-telescope duplicates in the same band
+# collapsed to one point per (band, round(MJD,2)). Implies FULL (it has no g/r/i-only counterpart).
+PREPROCESS = os.environ.get("VILLAR_PREPROCESS") == "1"
+FULL = FULL or PREPROCESS        # preprocess is a specialization of the full run: same "big-data" budgets
 # Comparison space for the likelihood/distance: "magnitude" (Villar+17; σ ≈ fractional-flux scatter)
 # or "flux" (additive-flux scatter). Set VILLAR_SPACE=flux for the flux-space comparison.
 SPACE = os.environ.get("VILLAR_SPACE", "magnitude")
 _SPACE_SUFFIX = "_flux" if SPACE == "flux" else ""            # magnitude = no suffix
 DATA = os.path.join(HERE, "tests", "data",
-                    "at2017gfo_full.csv" if FULL else "at2017gfo.csv")
+                    "at2017gfo_full_preprocessed.csv" if PREPROCESS
+                    else "at2017gfo_full.csv" if FULL else "at2017gfo.csv")
 OUT = os.path.join(HERE, "docs", "figures",
-                   ("at2017gfo_villar_full" if FULL else "at2017gfo_villar") + _SPACE_SUFFIX)
-BANDS = (["uvot::uvw1", "B", "g", "V", "r", "i", "z", "Y", "J", "H", "Ks"]  # UV -> optical -> NIR
-         if FULL else ["g", "r", "i"])
+                   ("at2017gfo_villar_full_preprocessed" if PREPROCESS
+                    else "at2017gfo_villar_full" if FULL else "at2017gfo_villar") + _SPACE_SUFFIX)
+BANDS = (["B", "g", "V", "r", "i", "z", "Y", "J", "H", "Ks"] if PREPROCESS else       # UVOT uvw1 dropped
+         ["uvot::uvw1", "B", "g", "V", "r", "i", "z", "Y", "J", "H", "Ks"] if FULL    # UV -> optical -> NIR
+         else ["g", "r", "i"])
 EXPLOSION = 57982.529 if FULL else 57982.0     # GW170817 merger (MJD); g/r/i run used 57982.0
 TMAX_DAYS = 30.0
 Z_AT = 0.00984                      # GW170817 host (NGC 4993)
@@ -101,8 +109,8 @@ PRIOR_ABC = Prior(dict(PRIOR_PHYS))                                  # distance-
 
 
 def setup():
-    lc = wp.load_lightcurve(DATA, explosion_date=EXPLOSION, min_snr=3, bands=BANDS,
-                            redshift=Z_AT)
+    lc = wp.load_lightcurve(DATA, explosion_date=EXPLOSION, min_snr=(5 if PREPROCESS else 3),
+                            bands=BANDS, redshift=Z_AT)
     tp = np.asarray(lc.time, float)                       # phase (days since explosion)
     keep = (tp >= 0.0) & (tp <= TMAX_DAYS)                # early kilonova window
     return lc[keep] if not keep.all() else lc

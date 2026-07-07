@@ -6,7 +6,7 @@ a Whisper ``Prior``, and the result is the usual ``SamplerResult`` (with the tra
 attached as ``result.posterior``). Needs the optional ``[sbi]`` extra (sbi + torch).
 
     docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && \
-        python scripts/demo_snpe.py'
+        python dev/demo_snpe.py'
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ try:
     import corner
     fig = corner.corner(res.samples[res.parameters].to_numpy(), labels=res.parameters,
                         truths=[TRUE[p] for p in res.parameters], show_titles=True)
-    out = "docs/figures/snpe_flare_corner.png"
+    out = "dev/figures/snpe_flare_corner.png"
     fig.savefig(out, dpi=130, bbox_inches="tight")
     print(f"\nSaved corner plot -> {out}")
 except Exception as exc:   # corner optional / headless quirks must not fail the demo

@@ -5,9 +5,9 @@ The GPU accelerates the *neural-network training*, not the simulator, so this us
 ``gaussian_rise`` model (negligible simulation cost) to isolate the training speed-up. It runs a ladder
 of increasingly heavy configurations, **estimating each tier's time from the previous one before
 running it** and skipping any tier whose CPU estimate exceeds ``--budget`` seconds. Outputs a table and
-a log-log runtime plot (``docs/figures/snpe_device_benchmark.png``).
+a log-log runtime plot (``sanity_check/figures/snpe_device_benchmark.png``).
 
-    python scripts/benchmark_snpe_device.py [--budget 240]
+    python sanity_check/benchmark_snpe_device.py [--budget 240]
 
 GPU selection honours ``CUDA_VISIBLE_DEVICES``. Runtimes are wall-clock and depend on machine load; the
 CPU/GPU *ratio* and the crossover point are the robust takeaways.
@@ -27,7 +27,7 @@ import whisper_labia as wp
 from whisper_labia.models import get_model
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIGDIR = os.path.join(HERE, "docs", "figures")
+FIGDIR = os.path.join(HERE, "sanity_check", "figures")
 TRUE = {"amplitude": 5.0, "t0": 8.0, "sigma_rise": 3.0, "tau_decay": 15.0}
 # (num_simulations, num_rounds), light -> heavy
 TIERS = [(500, 1), (2_000, 1), (8_000, 1), (20_000, 1), (50_000, 1), (20_000, 2)]

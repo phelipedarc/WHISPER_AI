@@ -6,7 +6,7 @@ is stubbed here with a fake metadata function, exactly as the test-suite mocks i
 boundary calls ``astroquery.svo_fps.SvoFps``; install the ``[svo]`` extra to enable it.
 
     docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && \
-        python scripts/demo_ingestion.py'
+        python dev/demo_ingestion.py'
 """
 from __future__ import annotations
 

@@ -12,8 +12,8 @@ differently) need not give identical posteriors; the machinery running cleanly a
 in a comparable region across all six configurations is the check. (The clean version of this test will
 come with a kilonova model that actually fits AT2017GFO.)
 
-    python scripts/sanity_mck19_modes.py        # fit all six configs, then plot
-    python scripts/sanity_mck19_modes.py plot    # re-plot from saved results
+    python sanity_check/sanity_mck19_modes.py        # fit all six configs, then plot
+    python sanity_check/sanity_mck19_modes.py plot    # re-plot from saved results
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from whisper_labia.models import get_model
 from whisper_labia.priors import LogUniform, Prior, Uniform
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIGDIR = os.path.join(HERE, "docs", "figures")
+FIGDIR = os.path.join(HERE, "sanity_check", "figures")
 DATA = os.path.join(HERE, "tests", "data", "at2017gfo.csv")
 RESULTS = os.path.join(FIGDIR, "mck19_modes_results.json")
 DATANPZ = os.path.join(FIGDIR, "mck19_modes_data.npz")

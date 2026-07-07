@@ -1,7 +1,7 @@
 """Demo: the ``mck19`` AGN-disk BBH-merger flare light curve in LSST g/r/i.
 
 Renders the kicked-hotspot flare (sin^2 rise to the ram-pressure delay, then exponential decay) for two
-kick velocities, in apparent AB magnitude. Saves ``docs/figures/mck19_lightcurve.png``.
+kick velocities, in apparent AB magnitude. Saves ``dev/figures/mck19_lightcurve.png``.
 """
 import os
 
@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from whisper_labia.models import get_model, mck19
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(HERE, "docs", "figures", "mck19_lightcurve.png")
+OUT = os.path.join(HERE, "dev", "figures", "mck19_lightcurve.png")
 
 BANDS = ["g", "r", "i"]
 COLORS = {"g": "#2ca02c", "r": "#d62728", "i": "#8c564b"}

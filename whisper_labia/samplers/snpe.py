@@ -413,7 +413,7 @@ class SNPESampler(BaseSampler):
         ``'cuda'`` / ``'gpu'`` / ``'cuda:N'``, or ``'auto'`` (CUDA when available, else CPU). The torch
         prior and observed data are placed on the device automatically; requesting a GPU without one
         warns and falls back to CPU. The GPU accelerates *training*, not the (CPU) simulator — so it
-        helps most with many simulations / large networks (see ``scripts/benchmark_snpe_device.py``).
+        helps most with many simulations / large networks (see ``sanity_check/benchmark_snpe_device.py``).
         """
         if proposal_mode not in ("posterior", "restricted"):
             raise ValueError(f"proposal_mode must be 'posterior' or 'restricted'; got {proposal_mode!r}.")

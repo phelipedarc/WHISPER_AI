@@ -3,7 +3,7 @@ non-adversarial draw (worst |z_fisher| <~ 1) can be chosen for the cross-method 
 NOTE this screening makes single-realisation recovery/coverage columns favourable by construction —
 they are method comparisons on a well-posed realization, NOT calibration evidence (SBC tests that,
 over many unscreened realizations). The choice is disclosed in the generated REPORT.md.
-Usage: python scripts/_scan_seed.py [mock ...]   (default: the gp sweep)"""
+Usage: python dev/_scan_seed.py [mock ...]   (default: the gp sweep)"""
 import sys
 
 import numpy as np

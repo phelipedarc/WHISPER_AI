@@ -17,7 +17,7 @@ import numpy as np
 from whisper_labia.models import get_model
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIGDIR = os.path.join(HERE, "docs", "figures")
+FIGDIR = os.path.join(HERE, "dev", "figures")
 NPZ = {s: os.path.join(FIGDIR, f"mck19_at2017gfo_{s}.npz") for s in ("abc", "mcmc")}
 FREE = ["v_kick", "M_smbh", "M_bh", "r_bh"]
 BOUNDS = {"v_kick": (100.0, 800.0), "M_smbh": (1e6, 1e9), "M_bh": (20.0, 160.0), "r_bh": (500.0, 10000.0)}

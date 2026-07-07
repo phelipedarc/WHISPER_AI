@@ -1,7 +1,7 @@
 """Demo: ABC fit of the generic flare model to AT2017GFO (r-band), with a fit plot and timing.
 
 Run inside the container:
-    docker exec phe_sbi python /tf/astrodados2/phelipedata2/WHISPER/whisper-labia/scripts/demo_abc_at2017gfo.py
+    docker exec phe_sbi python /tf/astrodados2/phelipedata2/WHISPER/whisper-labia/dev/demo_abc_at2017gfo.py
 """
 from pathlib import Path
 
@@ -16,7 +16,7 @@ from whisper_labia.models.flare import flare_flux  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "tests" / "data" / "at2017gfo.csv"
-FIGS = ROOT / "docs" / "figures"
+FIGS = ROOT / "dev" / "figures"
 FIGS.mkdir(parents=True, exist_ok=True)
 
 

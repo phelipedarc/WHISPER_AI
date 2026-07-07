@@ -6,7 +6,7 @@
 #   docker compose up -d
 #   docker compose exec whisper_dev pip install -e /workspace/redback
 #   docker compose exec whisper_dev pip install -e /workspace/whisper-labia
-#   docker compose exec whisper_dev python /workspace/whisper-labia/scripts/phase0_smoke.py
+#   docker compose exec whisper_dev python /workspace/whisper-labia/dev/phase0_smoke.py
 services:
   whisper_dev:
     build:

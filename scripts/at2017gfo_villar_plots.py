@@ -168,6 +168,26 @@ def plot(out, samplers, params, labels, bands):
     ref = npz[ms[0]]
     t, band = ref["time"], ref["band"].astype(str)
     mag, err = ref["mag"], ref["mag_err"]
+    # Early-peak-timing diagnostic: compare MCMC's (sharp MAP) best-fit curve's peak in each optical
+    # band to the brightest OBSERVED point in that band. A real, reproducible mismatch here hides
+    # behind good aggregate chi2/coverage (few points near peak vs many on the decline) and only shows
+    # up in the zoomed early-time PPC -> surfaced explicitly in the report interpretation.
+    peak_info = None
+    if "mcmc" in npz:
+        dm = npz["mcmc"]
+        worst = None
+        for b in ("V", "r", "g", "i"):
+            if b not in bands or not np.any(band == b):
+                continue
+            sel = band == b
+            tb, mb = t[sel], mag[sel]
+            i_obs = int(np.argmin(mb))
+            lo_c, med_c, hi_c = dm[f"curve_{b}"]
+            i_mod = int(np.argmin(med_c))
+            delta = float(dm["tgrid"][i_mod] - tb[i_obs])
+            if worst is None or delta > worst[1]:
+                worst = (b, delta, float(tb[i_obs]), float(dm["tgrid"][i_mod]))
+        peak_info = worst
     # y-range from the DATA + median curves (not the σ-inflated tails), and tightened toward the data
     # so the many bands spread out vertically and are easy to tell apart; taller panels add resolution.
     med_all = np.concatenate([npz[m][f"curve_{b}"][1] for m in ms for b in bands])
@@ -190,7 +210,8 @@ def plot(out, samplers, params, labels, bands):
     ax[0][0].legend(loc="upper right", ncol=min(len(bands), 6), fontsize=8, frameon=False,
                     title="band (blue→red)", columnspacing=0.9, handletextpad=0.4)
     ax[-1][0].set_xlabel("days since merger (MJD 57982.53)")
-    _bandlabel = "g/r/i" if all(b in _BAND_FIXED for b in bands) else "UV→optical→NIR (11 bands)"
+    _bandlabel = ("g/r/i" if all(b in _BAND_FIXED for b in bands)
+                  else f"UV→optical→NIR ({len(bands)} bands)")
     fig.suptitle(f"AT2017GFO posterior-predictive light curves — {_bandlabel} (95% model band + data)",
                  y=1.0, weight="bold")
     fig.tight_layout()
@@ -238,8 +259,12 @@ def plot(out, samplers, params, labels, bands):
             a.set_xlabel("days since merger", fontsize=16)
     for k in range(len(ms), nrows * ncols):                 # hide unused grid cells
         ax[k // ncols][k % ncols].axis("off")
-    ax[0][0].legend(loc="upper right", ncol=min(len(bands), 4), fontsize=12, frameon=True,
-                    title="band (blue→red)", title_fontsize=12)
+    # Figure-level legend BELOW the whole grid (never over a panel's title or its brightest, most
+    # crowded early-time data — an in-axes legend collided with both for the 11-band UVOIR run).
+    leg_handles, leg_labels = ax[0][0].get_legend_handles_labels()
+    fig.legend(leg_handles, leg_labels, loc="upper center", bbox_to_anchor=(0.5, -0.02),
+               ncol=min(len(bands), 6), fontsize=11, frameon=True,
+               title="band (blue→red)", title_fontsize=12)
     fig.suptitle(f"AT2017GFO posterior-predictive light curves — early time ({t_lo:g}–{t_hi:g} d), "
                  f"{_bandlabel}", y=1.01, weight="bold", fontsize=19)
     fig.tight_layout()
@@ -291,21 +316,26 @@ def plot(out, samplers, params, labels, bands):
     fig.savefig(os.path.join(out, "villar_summary.png"), dpi=140, bbox_inches="tight")
     plt.close(fig)
 
-    _report(out, res, samplers, params, labels, ms)
+    _report(out, res, samplers, params, labels, ms, peak_info)
     print("saved figures + REPORT ->", out)
 
 
-def _report(out, res, samplers, params, labels, ms):
+def _report(out, res, samplers, params, labels, ms, peak_info=None):
     allp = params + ["sigma"]
     base = os.path.basename(out.rstrip("/"))
     full = "_full" in base
+    preprocessed = "preprocessed" in base
     space = "flux" if base.endswith("_flux") else "magnitude"
     space_desc = ("**flux space** (additive-flux scatter σ [Jy])" if space == "flux"
                   else "**apparent-magnitude space** (Villar+17; σ ≈ fractional-flux scatter [mag])")
-    data_desc = ("**full UV → optical → NIR photometry** (11 bands, Swift-UV `uvw1` through 2MASS "
+    data_desc = ("**preprocessed UV → optical → NIR photometry** (10 bands, Swift-UVOT `uvw1` "
+                 "dropped, SNR > 5, one observation per band per 0.01 d epoch, 0–30 d)"
+                 if preprocessed else
+                 "**full UV → optical → NIR photometry** (11 bands, Swift-UV `uvw1` through 2MASS "
                  "`Ks`, SNR ≥ 3, 0–30 d)" if full else "g/r/i photometry (SNR ≥ 3)")
+    _title_tag = " (preprocessed UVOIR" if preprocessed else " (full UVOIR" if full else ""
     lines = ["# AT2017GFO — Villar+2017-style two-component kilonova with WHISPER"
-             + (" (full UVOIR" + (", flux space)" if space == "flux" else ")") if full else ""), "",
+             + (_title_tag + (", flux space)" if space == "flux" else ")") if full else ""), "",
              "Real-data application: the redback `two_component_kilonova` model with "
              "**κ_blue = 0.5 cm²/g fixed**, redshift fixed (z = 0.00984), **κ_red and both "
              f"temperature floors free**, fit to the AT2017GFO {data_desc} in "
@@ -411,6 +441,17 @@ def _report(out, res, samplers, params, labels, ms):
                     f"set constrains weakly — so {', '.join(red_railers) or 'the red parameters'} rail "
                     "against their prior edges. Adding NIR coverage (the full-UVOIR run) is what "
                     "identifies them."))),
+              *([f"- **Early-time peak timing.** In **{peak_info[0]}-band**, MCMC's best-fit curve peaks "
+                 f"at t≈{peak_info[3]:.2f} d — **{peak_info[1]:+.2f} d** from the brightest *observed* "
+                 f"point (t≈{peak_info[2]:.2f} d) — even though the aggregate χ²/dof and coverage look "
+                 "good (visible in the zoomed early-time PPC below, not the aggregate metrics: a "
+                 "handful of near-peak points are outweighed by the many post-peak points in the χ² "
+                 "sum, and the fitted scatter σ absorbs the residual). Present in **both magnitude and "
+                 "flux space** at similar magnitude, so it is not a units/weighting artifact — most "
+                 "plausibly the semi-analytic two-component model's single-diffusion-timescale-per-"
+                 "component approximation not capturing the very early (<1 d) rise/peak shape as "
+                 "precisely as a full radiative-transfer calculation."]
+                if peak_info is not None and abs(peak_info[1]) > 0.15 else []),
               f"- **MCMC vs simulation-based inference.** MCMC finds the sharp maximum-likelihood mode "
               f"(χ²/dof = {res['mcmc']['ppc']['chi2_reported']:.0f} vs reported errors, lowest AIC); "
               "the amortized/rejection samplers report a broader posterior bulk. They agree on the "

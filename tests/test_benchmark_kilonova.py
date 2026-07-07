@@ -1,4 +1,4 @@
-"""Tests for the kilonova flux-vs-magnitude benchmark (`scripts/benchmark_kilonova_modes.py`).
+"""Tests for the kilonova flux-vs-magnitude benchmark (`sanity_check/benchmark_kilonova_modes.py`).
 
 The setup + magnitude-distance tests need no redback; the end-to-end fit+plot is slow and guarded.
 """
@@ -10,7 +10,7 @@ import pytest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPEC = importlib.util.spec_from_file_location(
-    "benchmark_kilonova_modes", os.path.join(HERE, "scripts", "benchmark_kilonova_modes.py"))
+    "benchmark_kilonova_modes", os.path.join(HERE, "sanity_check", "benchmark_kilonova_modes.py"))
 bench = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(bench)
 

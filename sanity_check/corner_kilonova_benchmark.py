@@ -7,7 +7,7 @@ palette), and annotates each method with its **WAIC** (`wp.waic`). Unlike a tabl
 corner shows the full posteriors + uncertainties, so whether the methods are *compatible* is visible
 directly. WAIC (lower = better) adds a fully-Bayesian model-fit score that uses the whole posterior.
 
-    python scripts/corner_kilonova_benchmark.py [flux|magnitude]
+    python sanity_check/corner_kilonova_benchmark.py [flux|magnitude]
 """
 import os
 import sys
@@ -23,7 +23,7 @@ matplotlib.use("Agg")
 import whisper_labia as wp
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIGDIR = os.path.join(HERE, "docs", "figures")
+FIGDIR = os.path.join(HERE, "sanity_check", "figures")
 DATA = os.path.join(HERE, "tests", "data", "at2017gfo.csv")
 Z_AT, T_FLOOR = 0.00984, 2500.0
 BANDS = ["g", "r", "i"]

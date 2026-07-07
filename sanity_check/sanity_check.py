@@ -11,12 +11,12 @@ tuple** with GPU-vectorized simulation; the SNPE-5-round benchmark compares no e
 TCN embedding. ABC/ABC-SMC simulations are **noise-matched** (per-point ``flux_err`` white noise).
 Statistics: per-parameter z-score + credible-interval coverage, posterior-predictive checks (reduced χ²
 + predictive coverage), and Simulation-Based Calibration (rank uniformity). Outputs land in
-``docs/figures/sanity_check/``.
+``sanity_check/figures/``.
 
     # one config at a time (parallel-friendly; give each GPU method its own GPU), then render:
-    CUDA_VISIBLE_DEVICES=0 python scripts/sanity_check.py fit bazin_sn npe_mdn
-    python scripts/sanity_check.py sbc bazin_sn mcmc
-    python scripts/sanity_check.py plot
+    CUDA_VISIBLE_DEVICES=0 python sanity_check/sanity_check.py fit bazin_sn npe_mdn
+    python sanity_check/sanity_check.py sbc bazin_sn mcmc
+    python sanity_check/sanity_check.py plot
 """
 from __future__ import annotations
 
@@ -35,10 +35,10 @@ from whisper_labia.models.bazin import bazin_flux            # physically-motiva
 from whisper_labia.priors import Prior, Uniform
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(HERE, "docs", "figures", "sanity_check")
+OUT = os.path.join(HERE, "sanity_check", "figures")
 NOISE = 0.15                       # white-noise sigma (flux units); damped-sine peak ~5 -> SNR ~ 33
 # Noise seeds. DATA_SEED is arbitrary (unscreened). SWEEP_SEED/BAZIN_SEED were SCREENED with
-# scripts/_scan_seed.py to be non-adversarial (worst |MLE-truth|/sigma_Fisher <~ 1): an unlucky draw
+# dev/_scan_seed.py to be non-adversarial (worst |MLE-truth|/sigma_Fisher <~ 1): an unlucky draw
 # (e.g. a 2.4-sigma noise excursion) makes every method "miss" the truth spuriously, which defeats a
 # cross-method comparison table. The screening makes the single-realization recovery/coverage columns
 # favourable by construction — they compare methods on a shared, well-posed realization and are NOT

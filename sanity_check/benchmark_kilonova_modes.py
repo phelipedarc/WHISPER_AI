@@ -13,8 +13,8 @@ spaces should agree — the sanity check — while the per-sampler **runtime** g
 Each ``fit <mode> <sampler>`` run writes its own result + samples, so the six can run in parallel::
 
     for m in flux magnitude; do for s in abc mcmc snpe; do
-        python scripts/benchmark_kilonova_modes.py fit $m $s & ; done; done; wait
-    python scripts/benchmark_kilonova_modes.py plot
+        python sanity_check/benchmark_kilonova_modes.py fit $m $s & ; done; done; wait
+    python sanity_check/benchmark_kilonova_modes.py plot
 
 Note: runtimes are wall-clock under the given budgets / `n_jobs` on a shared host — relative comparison
 is robust; absolute numbers depend on machine load.
@@ -35,7 +35,7 @@ from whisper_labia.models import get_model
 from whisper_labia.priors import Prior, Uniform
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIGDIR = os.path.join(HERE, "docs", "figures")
+FIGDIR = os.path.join(HERE, "sanity_check", "figures")
 DATA = os.path.join(HERE, "tests", "data", "at2017gfo.csv")
 Z_AT, T_FLOOR = 0.00984, 2500.0
 BANDS = ["g", "r", "i"]

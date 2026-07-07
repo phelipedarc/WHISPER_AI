@@ -1,4 +1,4 @@
-"""Rendering for the WHISPER sanity check / benchmark (see scripts/sanity_check.py).
+"""Rendering for the WHISPER sanity check / benchmark (see sanity_check/sanity_check.py).
 
 Reads the cached ``sanity_*.json`` / ``.npz`` results and produces the figures + REPORT.md in the
 output folder: per-parameter posterior histograms, an all-method corner, posterior-predictive checks,

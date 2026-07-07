@@ -127,12 +127,12 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
   the raw run gave |z|≈8 with 0% coverage). `min_epsilon="auto"` floors ε at **χ²_min + 2(k+2)** (k =
   #parameters), which reproduces the Gaussian posterior width and restores |z|≲2 with nominal coverage;
   a float sets a fixed floor. Default `None` keeps the old behavior.
-- **`scripts/sanity_check.py` + `scripts/sanity_check_plots.py`** — end-to-end recovery benchmark on
+- **`sanity_check/sanity_check.py` + `sanity_check/sanity_check_plots.py`** — end-to-end recovery benchmark on
   synthetic data with known ground truth: fits a physically-motivated **Bazin (2009) supernova** light
   curve (headline showcase), a 4-param damped sinusoid (correlated/oscillatory stress test) and a
   2/4/6-param Gaussian-pulse sweep, timing every sampler, and renders posterior histograms, an
   all-sampler corner, posterior-predictive checks, SBC rank histograms, a recovery/speed/scaling summary
-  and `REPORT.md` into `docs/figures/sanity_check/`. Showcase noise seeds are screened non-adversarial
+  and `REPORT.md` into `sanity_check/figures/`. Showcase noise seeds are screened non-adversarial
   (worst |MLE−truth|/σ_Fisher ≲ 1) and the choice is disclosed in the report — single-realization tables
   compare methods; **SBC over many unscreened realizations is the calibration evidence**. On the damped
   sine, exact MCMC calibrates, NPE-MAF trails mildly over-confident, and the ABC family shows its
@@ -176,8 +176,8 @@ A systematic, adversarially-verified review (physical consistency, Bayesian rigo
   posteriors** (SamplerResults, DataFrames, dicts, or arrays) on one publication-ready figure: shared
   per-parameter ranges so panels align, a **dark, distinct palette** (`CORNER_PALETTE`), contour lines
   (not filled) so overlaps stay legible, `log_params=` for log axes, `truths=`, and a colour→label
-  legend. `scripts/corner_kilonova_benchmark.py` uses it for the AT2017GFO benchmark posteriors
-  (`docs/figures/at2017gfo_corner_flux.png`) — the corner shows whether the samplers are *compatible*
+  legend. `sanity_check/corner_kilonova_benchmark.py` uses it for the AT2017GFO benchmark posteriors
+  (`sanity_check/figures/at2017gfo_corner_flux.png`) — the corner shows whether the samplers are *compatible*
   (full posteriors + uncertainties), which the point-estimate table cannot.
 - **`wp.waic(posterior, lc, model, ...)`** — the **Widely Applicable Information Criterion** (Watanabe
   2010), a fully-Bayesian fit score (lower is better) that uses the *whole* posterior: returns `waic`,
@@ -190,18 +190,18 @@ A systematic, adversarially-verified review (physical consistency, Bayesian rigo
   data are now placed on the chosen device (fixing the sbi *"prior device must match training device"*
   error), and requesting a GPU without one **warns and falls back to CPU** instead of crashing.
 - The GPU accelerates the neural-network **training**, not the (CPU) simulator — so it helps most with
-  many simulations / large networks. `scripts/benchmark_snpe_device.py` measures GPU-vs-CPU runtime
+  many simulations / large networks. `sanity_check/benchmark_snpe_device.py` measures GPU-vs-CPU runtime
   across a ladder of simulation counts (estimating each tier's time before running it, with a
-  `--budget` guard) and saves a log-log plot (`docs/figures/snpe_device_benchmark.png`).
+  `--budget` guard) and saves a log-log plot (`sanity_check/figures/snpe_device_benchmark.png`).
 - Tested: `_resolve_device` mapping/fallback (no GPU needed) + a slow on-GPU recovery test
   (`skipif` no CUDA).
 
 ### Kilonova flux-vs-magnitude benchmark
-- New **timed benchmark + sanity check** ([`docs/BENCHMARK.md`](docs/BENCHMARK.md),
-  `scripts/benchmark_kilonova_modes.py`): `two_component_kilonova` fit to AT2017GFO (g/r/i) in
+- New **timed benchmark + sanity check** ([`sanity_check/BENCHMARK.md`](sanity_check/BENCHMARK.md),
+  `sanity_check/benchmark_kilonova_modes.py`): `two_component_kilonova` fit to AT2017GFO (g/r/i) in
   **flux** vs **magnitude** space with ABC / MCMC / SNPE (6 configs). Records per-config **runtime**,
   AIC, RMS and posterior size; each config writes its own result file so the six run in parallel.
-- **Publication-quality report figure** (`docs/figures/kilonova_benchmark_report.png`): larger fonts,
+- **Publication-quality report figure** (`sanity_check/figures/kilonova_benchmark_report.png`): larger fonts,
   colourblind-safe (Okabe–Ito) band colours, line-style per sampler, inward ticks, clear unit-labelled
   axes, and an **embedded table of the best-fit ejecta parameters + metrics per configuration**.
 - Tested (`tests/test_benchmark_kilonova.py`): `setup` + magnitude-space distance (no redback) + a
@@ -219,7 +219,7 @@ A systematic, adversarially-verified review (physical consistency, Bayesian rigo
   magnitude is converted to WHISPER's canonical **flux density (Jy)** as an exact (machine-precision)
   round-trip, so the shared likelihood/samplers treat it like any other model. Expensive simulator
   (~50 ms/call) → **SNPE** is the natural sampler; `predict` is module-level (parallel-ABC safe).
-- `scripts/demo_kilonova.py` (light curve) and `scripts/fit_kilonova_at2017gfo.py` (ABC/MCMC/SNPE fit of
+- `dev/demo_kilonova.py` (light curve) and `dev/fit_kilonova_at2017gfo.py` (ABC/MCMC/SNPE fit of
   AT2017GFO — which, being a real kilonova, this model fits well, unlike `mck19`).
 
 ### `mck19` physical model — BBH merger in an AGN disk
@@ -236,7 +236,7 @@ A systematic, adversarially-verified review (physical consistency, Bayesian rigo
   constants/cosmology only (no `speclite`/`extinction`); the AB magnitude is the monochromatic-at-`λ_eff`
   approximation to the original LSST filter integration. Fits with every sampler through the shared
   likelihood (an MCMC recovery test confirms data-mode-consistent magnitude-space fitting).
-- `scripts/demo_mck19.py` renders the g/r/i light curve (`docs/figures/mck19_lightcurve.png`).
+- `dev/demo_mck19.py` renders the g/r/i light curve (`dev/figures/mck19_lightcurve.png`).
 
 ### MCMC sampler (emcee)
 - New **`MCMCSampler`** (`mcmc`, `fit_MCMC`) — affine-invariant ensemble MCMC via `emcee` (a core
@@ -245,7 +245,7 @@ A systematic, adversarially-verified review (physical consistency, Bayesian rigo
   ABC/ABC-SMC/SNPE (flux data → flux space, magnitude data → magnitude space). Walkers init from the
   prior (or a given `initial_guess`); sampling is **seeded/reproducible**; exact Gaussian AIC/BIC; the
   `emcee.EnsembleSampler` is attached as `result.emcee_sampler`.
-- `scripts/compare_samplers.py` — sanity check that ABC / ABC-SMC / MCMC / SNPE converge to the **same
+- `sanity_check/compare_samplers.py` — sanity check that ABC / ABC-SMC / MCMC / SNPE converge to the **same
   posterior** on `gaussian_rise`, with an overlaid corner plot.
 
 ### Production-readiness pass

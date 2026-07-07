@@ -15,5 +15,8 @@ outputs/
 
 # regenerable intermediate posterior samples / fit data (figures are kept; rerun the fit scripts to remake)
 docs/figures/**/*.npz
+analysis/**/figures/**/*.npz
+sanity_check/figures/**/*.npz
+dev/figures/**/*.npz
 .hypothesis/
-docs/figures/kilonova_bench_*.json
+sanity_check/figures/kilonova_bench_*.json

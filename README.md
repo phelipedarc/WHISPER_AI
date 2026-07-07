@@ -49,7 +49,7 @@ lc = lc.select_snr(min_snr=5)                # keep good detections (SNR >= 5)
 wp.plot_light_curve(lc, layout="report")     # apparent-mag + flux overview, all bands
 ```
 
-![report plot](docs/figures/at2017gfo_report.png)
+![report plot](dev/figures/at2017gfo_report.png)
 
 ## What you can do today
 

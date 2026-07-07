@@ -1,7 +1,7 @@
 """Demo: the redback-backed ``two_component_kilonova`` light curve in LSST g/r/i/z.
 
 Shows how the blue (low-κ) + red (high-κ) components combine, for two ejecta configurations, in apparent
-AB magnitude at AT2017GFO's distance (z=0.00984). Saves ``docs/figures/kilonova_lightcurve.png``.
+AB magnitude at AT2017GFO's distance (z=0.00984). Saves ``dev/figures/kilonova_lightcurve.png``.
 """
 import os
 import warnings
@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from whisper_labia.models import get_model
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(HERE, "docs", "figures", "kilonova_lightcurve.png")
+OUT = os.path.join(HERE, "dev", "figures", "kilonova_lightcurve.png")
 
 BANDS = ["g", "r", "i", "z"]
 COLORS = {"g": "#2ca02c", "r": "#d62728", "i": "#8c564b", "z": "#7f7f7f"}

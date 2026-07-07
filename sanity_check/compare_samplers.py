@@ -6,7 +6,7 @@ data they must agree. This fits the ``gaussian_rise`` model and overlays the fou
 corner plot (truth marked).
 
     docker exec phe_sbi bash -lc 'cd /tf/astrodados2/phelipedata2/WHISPER/whisper-labia && \
-        python scripts/compare_samplers.py'
+        python sanity_check/compare_samplers.py'
 """
 from __future__ import annotations
 
@@ -74,6 +74,6 @@ fig.legend(handles=[Patch(color=c, label=lbl) for lbl, _, c in results],
            loc="upper right", frameon=True, fontsize=12, title="sampler")
 fig.suptitle(f"{MODEL}: posterior agreement across samplers (truth = dashed)", y=1.02)
 
-out = "docs/figures/sampler_comparison_corner.png"
+out = "sanity_check/figures/sampler_comparison_corner.png"
 fig.savefig(out, dpi=130, bbox_inches="tight")
 print(f"\nSaved {out}")

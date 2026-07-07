@@ -3,7 +3,7 @@
 Fits {flare, bazin, gaussian_rise} x {ABC, ABC-SMC}, ranks by AIC, and writes
 docs/REPORT_at2017gfo.md + a comparison figure + per-fit JSONs.
 
-Run: docker exec phe_sbi python /tf/astrodados2/phelipedata2/WHISPER/whisper-labia/scripts/report_at2017gfo.py
+Run: docker exec phe_sbi python /tf/astrodados2/phelipedata2/WHISPER/whisper-labia/dev/report_at2017gfo.py
 """
 from pathlib import Path
 
@@ -18,7 +18,7 @@ from whisper_labia.models import get_model  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "tests" / "data" / "at2017gfo.csv"
-FIGS = ROOT / "docs" / "figures"
+FIGS = ROOT / "dev" / "figures"
 FIGS.mkdir(parents=True, exist_ok=True)
 REPORT = ROOT / "docs" / "REPORT_at2017gfo.md"
 

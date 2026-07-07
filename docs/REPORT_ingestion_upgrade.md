@@ -41,7 +41,7 @@ fixed → **133 tests pass**.
 |---|---|---|
 | `whisper_labia/io/units.py` | ~165 | astropy unit validation/conversion (`to_canonical`, `to_flux_density_jy`, `check_magnitude_unit`, …) |
 | `whisper_labia/io/svo.py` | ~230 | SVO fallback — lazy/mockable network boundary, disk+memory cache, `register_manual_band`, `get_transmission_data` |
-| `scripts/demo_ingestion.py` | ~135 | Offline end-to-end demo of all four features |
+| `dev/demo_ingestion.py` | ~135 | Offline end-to-end demo of all four features |
 | `tests/test_units.py` | 12 tests | unit conversions + error paths |
 | `tests/test_svo.py` | 15 tests | band resolution, mocked SVO, caching, corrupt-cache resilience (×4 params), manual override |
 | `tests/test_ingestion.py` | 25 tests | redshift, data_mode, `__call__`, loader unit/band integration |
@@ -92,7 +92,7 @@ behavior; AB zero points are identical; already commented).
 
 ## 4. Offline demo
 
-`scripts/demo_ingestion.py` runs end-to-end with **no network** (the SVO boundary is stubbed exactly as
+`dev/demo_ingestion.py` runs end-to-end with **no network** (the SVO boundary is stubbed exactly as
 the tests mock it). Selected output:
 
 ```
