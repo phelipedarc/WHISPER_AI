@@ -2,8 +2,9 @@
 
 Two composable layers:
 
-1. :func:`normalize_band` / :func:`normalize_bands` -- light, case-sensitive formatting of raw
-   survey codes via :data:`DEFAULT_BAND_ALIASES` (e.g. 'zg' -> 'ztfg'). Unknown labels pass through.
+1. :func:`normalize_band` / :func:`normalize_bands` -- light formatting of raw survey codes via
+   :data:`DEFAULT_BAND_ALIASES` (e.g. 'zg' / 'ZTF_g' -> 'ztfg'; aliases are matched case-insensitively).
+   Unknown labels pass through unchanged.
 
 2. :func:`group_bands` -- collapse many heterogeneous filters into a small effective-band ladder
    via :data:`FILTER_LOOKUP` (e.g. 'B' -> 'g-band', 'V' -> 'r-band', 'Ks' -> 'K-band',
@@ -21,7 +22,7 @@ import numpy as np
 # Light survey-code normalization (extend per-call with the ``aliases`` argument).
 DEFAULT_BAND_ALIASES = {
     "zg": "ztfg", "zr": "ztfr", "zi": "ztfi",
-    "ztf_g": "ztfg", "ztf_r": "ztfr", "ztf_i": "ztfi",
+    "ztf_g": "ztfg", "ztf_r": "ztfr", "ztf_i": "ztfi", "ztf_z": "ztfz",
 }
 
 # Broadband grouping supplied by the user: collapse heterogeneous filters into an effective-band
@@ -34,21 +35,25 @@ FILTER_LOOKUP = {
     # g-group (+1)
     'g': 'g-band', 'G': 'g-band',
     'lsstg': 'g-band', 'g-ztf': 'g-band', 'ztfg': 'g-band', 'g-p1': 'g-band',
+    'ZTF_g': 'g-band', 'ztf_g': 'g-band',
     'B': 'g-band', 'b': 'g-band',
     'F475W': 'g-band', 'f475w': 'g-band',
     # r-group (0)
     'r': 'r-band', 'R': 'r-band', "r'": 'r-band',
     'lsstr': 'r-band', 'r-ztf': 'r-band', 'ztfr': 'r-band', 'r-p1': 'r-band',
+    'ZTF_r': 'r-band', 'ztf_r': 'r-band',
     'V': 'r-band', 'v': 'r-band', 'Vc': 'r-band',
     'F606W': 'r-band', 'F070W': 'r-band',
     'F625W': 'r-band', 'f625w': 'r-band',
     # i-group (-1)
     'i': 'i-band', 'I': 'i-band', 'Ic': 'i-band', "i'": 'i-band',
     'lssti': 'i-band', 'i-ztf': 'i-band', 'ztfi': 'i-band', 'i-p1': 'i-band',
+    'ZTF_i': 'i-band', 'ztf_i': 'i-band',
     'F814W': 'i-band',
     'F775W': 'i-band', 'f775w': 'i-band',
     # z-group (-2)
     'z': 'z-band', 'Z': 'z-band', "z'": 'z-band',
+    'ZTF_z': 'z-band', 'ztf_z': 'z-band', 'ztfz': 'z-band',
     'lsstz': 'z-band', 'z-ztf': 'z-band', 'ztfz': 'z-band', 'z-p1': 'z-band',
     'y': 'z-band', 'Y': 'z-band', 'lssty': 'z-band', 'y-p1': 'z-band',
     'F090W': 'z-band',
@@ -121,9 +126,12 @@ def resolve_band(band, *, lookup=None, svo_fallback=True, lambda_eff_hint=None, 
 
     lookup = FILTER_LOOKUP if lookup is None else lookup
     raw = str(band).strip()
-    group = lookup.get(raw, raw)
+    # Compose alias -> group: a label not in the lookup is normalised first (e.g. 'ZTF_g' -> 'ztfg'),
+    # so survey codes resolve without duplicating every case variant in the lookup table.
+    key = raw if raw in lookup else normalize_band(raw)
+    group = lookup.get(key, key)
 
-    info = LSST_BAND_INFO.get(group) or LSST_BAND_INFO.get(raw)
+    info = LSST_BAND_INFO.get(group) or LSST_BAND_INFO.get(key) or LSST_BAND_INFO.get(raw)
     if info is not None:
         return {"group": group, "lambda_eff": info["lambda_eff"],
                 "zero_point": info["zero_point"], "filter_id": info["filter_id"],
@@ -137,7 +145,7 @@ def resolve_band(band, *, lookup=None, svo_fallback=True, lambda_eff_hint=None, 
                 "source": res["source"]}
 
     # No local match.
-    if raw not in lookup:
+    if key not in lookup:
         if warn:
             warnings.warn(
                 f"Band {raw!r} is not in FILTER_LOOKUP; attempting SVO fallback."
@@ -184,11 +192,19 @@ def resolve_bands(bands, *, lookup=None, svo_fallback=True, warn=True):
 
 
 def normalize_band(band, aliases=None, warn_unknown=False, known=None):
-    """Normalize a single band label (trim whitespace, apply exact-match alias map)."""
+    """Normalize a single band label (trim whitespace, apply the alias map).
+
+    The alias map is tried case-sensitively first, then case-insensitively — so survey codes reach their
+    canonical band regardless of case (``ZTF_g`` / ``ztf_g`` / ``ZTF_G`` → ``ztfg``). The alias keys are
+    survey prefixes that never collide with case-sensitive single-letter bands, so this is safe.
+    """
     table = DEFAULT_BAND_ALIASES if aliases is None else {**DEFAULT_BAND_ALIASES, **aliases}
     raw = str(band).strip()
     if raw in table:
         return table[raw]
+    lower = {k.lower(): v for k, v in table.items()}
+    if raw.lower() in lower:
+        return lower[raw.lower()]
     if warn_unknown and known is not None and raw not in known:
         warnings.warn(f"Unrecognized band {raw!r} (left unchanged).", stacklevel=2)
     return raw

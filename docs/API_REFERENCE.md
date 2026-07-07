@@ -90,7 +90,7 @@ Ingestion options:
 
 ## 3. Bands & SVO resolution  (`io.bands`, `io.svo`)
 `normalize_band(s)`, `group_bands(bands, lookup=FILTER_LOOKUP)`, `unmapped_bands`, plus
-`DEFAULT_BAND_ALIASES` and `FILTER_LOOKUP` (88 labels → 10 effective bands).
+`DEFAULT_BAND_ALIASES` and `FILTER_LOOKUP` (96 labels → 10 effective bands; ZTF `ZTF_g`/`ztf_g`-style names included, aliases matched case-insensitively).
 
 - **`resolve_band(band, *, lookup=None, svo_fallback=True, lambda_eff_hint=None, warn=True)`** →
   `{group, lambda_eff (Å), zero_point (Jy), filter_id, source}`. Order: `FILTER_LOOKUP` group →
@@ -478,12 +478,12 @@ Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `dev/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (215 tests, all passing)
+## 8. Test coverage (217 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
 | `test_photometry.py` | 5 | AB zeropoint, mag↔flux, error propagation, SNR. |
-| `test_bands.py` | 11 | Aliases, case-sensitivity, `group_bands`/`FILTER_LOOKUP`, `unmapped_bands`. |
+| `test_bands.py` | 13 | Aliases (incl. ZTF `ZTF_g`-style, case-insensitive), case-sensitivity, `group_bands`/`FILTER_LOOKUP` (ZTF resolution + finite λ_eff/ZP), `unmapped_bands`. |
 | `test_schema.py` | 11 | Validation, subsetting, `add_*`, `snr`/`select_snr`, `set_explosion_date`, upper limits. |
 | `test_loader.py` | 12 | AT2017GFO load, window/subset, grouping, `min_snr`, `explosion_date`, upper limits. |
 | `test_plotting.py` | 11 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers; `plot_corner` overlay/legend, common-params + log axes + array/empty errors; `plot_ppc` single/multi × flux/magnitude × panel-by band/method; `plot_calibration` multi + per-band. |

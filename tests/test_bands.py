@@ -59,3 +59,23 @@ def test_group_bands_hst_extensions():
 def test_unmapped_bands():
     # C and W (clear/white-light) are intentionally left out of the lookup.
     assert unmapped_bands(["g", "r", "C", "W"]) == ["C", "W"]
+
+
+def test_ztf_prefixed_bands_resolve():
+    """ZTF_g / ZTF_r / ZTF_i / ZTF_z (and case variants) map to the LSST optical bands and resolve to a
+    finite effective wavelength + zero point (no NaN)."""
+    from whisper_labia.io.bands import resolve_band
+    import numpy as np
+    expect = {"ZTF_g": "g-band", "ZTF_r": "r-band", "ZTF_i": "i-band", "ZTF_z": "z-band"}
+    assert list(group_bands(list(expect))) == list(expect.values())
+    for b in ("ZTF_g", "ZTF_r", "ZTF_i", "ZTF_z", "ZTF_G", "ztf_g"):
+        r = resolve_band(b, svo_fallback=False, warn=False)
+        assert r["source"] == "lsst"
+        assert np.isfinite(r["lambda_eff"]) and np.isfinite(r["zero_point"])
+
+
+def test_normalize_band_case_insensitive_alias():
+    assert normalize_band("ZTF_g") == "ztfg"      # uppercase survey prefix
+    assert normalize_band("ZTF_G") == "ztfg"      # fully upper
+    assert normalize_band("Ztf_r") == "ztfr"
+    assert normalize_band("B") == "g-band" if False else normalize_band("B") == "B"  # case-sensitive bands unchanged

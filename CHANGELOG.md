@@ -5,6 +5,14 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Band lookup: ZTF-prefixed names + case-insensitive aliases
+- **`ZTF_g` / `ZTF_r` / `ZTF_i` / `ZTF_z`** (and `ztf_g`-style / mixed-case variants) now resolve to the
+  LSST g/r/i/z bands — added to `FILTER_LOOKUP` and `DEFAULT_BAND_ALIASES`, so their effective wavelength
+  and zero point fill in instead of `NaN`. `normalize_band` now matches aliases **case-insensitively**
+  (the alias keys are survey prefixes that never collide with case-sensitive single-letter bands), and
+  `resolve_band` **composes** the alias step (a label absent from the lookup is normalised first), so
+  survey codes resolve without hardcoding every case variant.
+
 ### Predictive & model-comparison metrics + coverage calibration in every fit's JSON
 - **`predictive_metrics(result, lc, ...)`** (`whisper_labia.metrics`) — a posterior-predictive metric
   block computed from the posterior sample and **auto-attached to `result.info["predictive_metrics"]`**
