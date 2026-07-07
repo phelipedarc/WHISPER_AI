@@ -5,6 +5,22 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Predictive & model-comparison metrics + coverage calibration in every fit's JSON
+- **`predictive_metrics(result, lc, ...)`** (`whisper_labia.metrics`) — a posterior-predictive metric
+  block computed from the posterior sample and **auto-attached to `result.info["predictive_metrics"]`**
+  by every sampler (so it is written to `to_json`):
+  - **RMSE** of `observed − posterior-mean prediction`, per band + overall.
+  - **LPD** (log predictive density, the `lppd`).
+  - **ELPD** by **PSIS-LOO** cross-validation (Vehtari et al. 2017) with `p_loo`, `se`, `looic` and the
+    Pareto-`k` diagnostic — via the optional **`arviz`** extra (`pip install 'whisper-labia[loo]'`);
+    degrades to `None` without it.
+  - **WAIC** (deviance scale), **AIC**, **BIC**.
+  - a **coverage-calibration curve**: empirical posterior-predictive coverage vs nominal at
+    50/68/80/90/95/99%, overall and per band.
+- **`plot_calibration(results, lc, ...)`** (`whisper_labia.plotting`) — the coverage-calibration curve /
+  reliability pp-plot (empirical vs nominal coverage; on the diagonal ⇒ calibrated), for one or more
+  fits or one fit broken out per band.
+
 ### Per-band goodness-of-fit + posterior-predictive grid plot
 - **`per_band_metrics(lc, model, params, *, space, fixed)`** (`whisper_labia.metrics`) — per-band and
   overall **MSE / RMSE / MAE** of the best-fit residuals in the fit's comparison space (Jy for flux,

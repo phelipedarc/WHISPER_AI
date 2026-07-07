@@ -35,7 +35,13 @@ from scipy.special import logsumexp
 from ..distance import chi2_distance, get_distance
 from ..likelihood import make_likelihood
 from ..models import get_model
-from .base import BaseSampler, SamplerResult, attach_band_metrics, summarize_posterior
+from .base import (
+    BaseSampler,
+    SamplerResult,
+    attach_band_metrics,
+    attach_predictive_metrics,
+    summarize_posterior,
+)
 
 #: Floor on a parameter's perturbation std so a fixed/zero-variance parameter still has a valid kernel.
 _PERTURB_FLOOR = 1e-12
@@ -332,7 +338,7 @@ class ABCSMCSampler(BaseSampler):
             "likelihood_space": lik_space.space,
         }
         attach_band_metrics(info, lc, model.name, best, space)
-        return SamplerResult(
+        result = SamplerResult(
             sampler="abc_smc", model=model.name, parameters=params,
             samples=samples, summary=summarize_posterior(samples, params), best_params=best,
             n_data=n, n_params=k, runtime_s=runtime, info=info,
@@ -340,6 +346,8 @@ class ABCSMCSampler(BaseSampler):
             aic=float(-2.0 * max_log_likelihood + 2 * k),
             bic=float(-2.0 * max_log_likelihood + k * np.log(n)),
         )
+        attach_predictive_metrics(result, lc, space)
+        return result
 
 
 def fit_ABC_SMC(lc, model="flare", prior=None, **kwargs) -> SamplerResult:

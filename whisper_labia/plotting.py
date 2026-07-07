@@ -296,6 +296,67 @@ def plot_ppc(results, lc, model=None, *, quantity="apparent_mag", panel_by="auto
     return fig
 
 
+# --- coverage-calibration curve --------------------------------------------------------------------
+
+def plot_calibration(results, lc, model=None, *, levels=(0.5, 0.68, 0.8, 0.9, 0.95, 0.99),
+                     space="auto", per_band=False, n_draws=400, colors=None, figsize=None,
+                     title=None, seed=0, save=None):
+    """Coverage-calibration curve (reliability / pp-plot) for one or more fits.
+
+    For each nominal credible level, plots the **empirical** posterior-predictive coverage — the
+    fraction of observations inside the central predictive interval (model + observation noise) — against
+    the nominal level. A well-calibrated fit lies on the diagonal; below ⇒ over-confident (intervals too
+    narrow), above ⇒ under-confident. Coverage is computed by
+    :func:`whisper_labia.metrics.predictive_metrics`.
+
+    ``results`` is a `SamplerResult`, a `{label: result}` dict, or a list. With ``per_band=True`` a
+    single fit is broken out into one line per band. Returns the ``Figure``.
+    """
+    from .metrics import predictive_metrics
+
+    if hasattr(results, "samples"):
+        fits = {getattr(results, "sampler", "fit"): results}
+    elif isinstance(results, dict):
+        fits = dict(results)
+    else:
+        fits = {getattr(r, "sampler", f"fit{i}"): r for i, r in enumerate(results)}
+
+    fig, ax = plt.subplots(figsize=figsize or (5.4, 5.2))
+    ax.plot([0, 1], [0, 1], ls="--", color="0.5", lw=1, label="perfect calibration")
+    palette = colors or CORNER_PALETTE
+
+    def _line(cov_list, label, color, **kw):
+        nominal = [c["nominal"] for c in cov_list]
+        empirical = [c["empirical"] for c in cov_list]
+        ax.plot(nominal, empirical, marker="o", ms=5, color=color, label=label, **kw)
+
+    if per_band and len(fits) == 1:
+        (lbl, r), = fits.items()
+        pm = predictive_metrics(r, lc, model=model, space=space, levels=levels, n_draws=n_draws, seed=seed)
+        _line(pm["coverage"]["overall"], "overall", "black", lw=2.2)
+        band_items = list(pm["coverage"]["bands"].items())
+        for i, (b, cov) in enumerate(band_items):
+            _line(cov, b, palette[i % len(palette)], lw=1.4, alpha=0.85)
+    else:
+        for i, (lbl, r) in enumerate(fits.items()):
+            pm = predictive_metrics(r, lc, model=model, space=space, levels=levels, n_draws=n_draws,
+                                    seed=seed)
+            _line(pm["coverage"]["overall"], lbl, palette[i % len(palette)], lw=2.0)
+
+    ax.set_xlabel("nominal credible level")
+    ax.set_ylabel("empirical coverage")
+    ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+    ax.set_aspect("equal")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=9, loc="upper left")
+    ax.set_title(title or f"Coverage calibration — {getattr(lc, 'name', None) or 'light curve'}",
+                 weight="bold")
+    fig.tight_layout()
+    if save is not None:
+        fig.savefig(save, dpi=140, bbox_inches="tight")
+    return fig
+
+
 # --- corner plot -----------------------------------------------------------------------------------
 
 #: Dark, distinct, print-friendly palette for overlaying posteriors (dark blue, dark red, dark green,

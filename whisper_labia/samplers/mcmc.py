@@ -25,7 +25,13 @@ import pandas as pd
 
 from ..likelihood import make_likelihood
 from ..models import get_model
-from .base import BaseSampler, SamplerResult, attach_band_metrics, summarize_posterior
+from .base import (
+    BaseSampler,
+    SamplerResult,
+    attach_band_metrics,
+    attach_predictive_metrics,
+    summarize_posterior,
+)
 
 
 def _log_prob(theta, names, prior, predict, times, bands, likelihood, scatter_name=None):
@@ -197,6 +203,7 @@ class MCMCSampler(BaseSampler):
             bic=float(-2.0 * max_log_likelihood + k * np.log(n)),
         )
         result.emcee_sampler = sampler
+        attach_predictive_metrics(result, lc, space)
         return result
 
 

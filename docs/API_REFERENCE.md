@@ -11,8 +11,8 @@ axes (models, samplers, likelihoods, distances) with the ABC / ABC-SMC / MCMC / 
 ```
 whisper_labia/
   __init__.py          # public API exports
-  plotting.py          # plot_light_curve, plot_ppc, plot_corner
-  metrics.py           # waic (Widely Applicable Information Criterion), per_band_metrics
+  plotting.py          # plot_light_curve, plot_ppc, plot_calibration, plot_corner
+  metrics.py           # waic, per_band_metrics, predictive_metrics (RMSE/LPD/ELPD-LOO/coverage)
   validation.py        # recovery_metrics, posterior_predictive_check, sbc_rank, sbc_ranks
   priors.py            # Uniform, LogUniform, Prior
   distance.py          # chi2_distance
@@ -23,7 +23,7 @@ whisper_labia/
 ```
 
 Top-level (`import whisper_labia as wp`): `LightCurve`, `load_lightcurve`, `plot_light_curve`,
-`plot_ppc`, `plot_corner`, `CORNER_PALETTE`, `waic`, `per_band_metrics`, `recovery_metrics`, `posterior_predictive_check`, `sbc_rank`,
+`plot_ppc`, `plot_calibration`, `plot_corner`, `CORNER_PALETTE`, `waic`, `per_band_metrics`, `predictive_metrics`, `recovery_metrics`, `posterior_predictive_check`, `sbc_rank`,
 `sbc_ranks`, `group_bands`, `FILTER_LOOKUP`, `resolve_band`, `resolve_bands`, `LSST_BAND_INFO`, `SvoUnavailable`,
 `register_manual_band`, `unregister_manual_band`, `clear_manual_bands`, `Prior`, `Uniform`, `LogUniform`,
 `Model`, `register_model`, `get_model`, `list_models`, `chi2_distance`, `register_distance`,
@@ -132,6 +132,11 @@ over the photometry, per band. `results` is one `SamplerResult`, a `{label: Samp
 list. `panel_by`: `"method"` (one panel per fit, bands overlaid — the multi-sampler grid),
 `"band"` (one panel per band, fits overlaid), or `"auto"` (method when several fits, else band).
 `quantity`: `"apparent_mag"` (inverted axis) or `"flux"` (flux density [Jy]). Returns the `Figure`.
+
+**`plot_calibration(results, lc, model=None, *, levels=(0.5, 0.68, 0.8, 0.9, 0.95, 0.99), space="auto", per_band=False, n_draws=400, colors=None, figsize=None, title=None, seed=0, save=None)`**
+— **coverage-calibration curve** (reliability / pp-plot): empirical posterior-predictive coverage vs the
+nominal credible level, for one or more fits (or one fit broken out `per_band=True`). On the diagonal =
+calibrated; below = over-confident, above = under-confident. Coverage from `predictive_metrics`.
 
 **`plot_corner(posteriors, *, labels=None, parameters=None, colors=None, truths=None, bins=30,
 levels=(0.39, 0.86), smooth=1.0, log_params=None, title=None, legend_loc="upper right", save=None, **corner_kwargs)`**
@@ -337,10 +342,11 @@ sbi posterior is attached as `result.posterior` (and `result.posteriors` per rou
 
 **`SamplerResult`** fields: `sampler`, `model`, `parameters`, `samples` (DataFrame of accepted draws
 + `distance`), `summary` (median/ci16/ci84/mean/std per param), `best_params`, `n_data`, `n_params`,
-`runtime_s`, `info` (n_simulations, n_accepted, acceptance_rate, epsilon, quantile, n_jobs, **and
-`band_metrics`** — per-band MSE/RMSE/MAE at the best fit, see §6.6), `min_distance`,
+`runtime_s`, `info` (n_simulations, n_accepted, acceptance_rate, epsilon, quantile, n_jobs, plus
+**`band_metrics`** — per-band MSE/RMSE/MAE at the best fit — and **`predictive_metrics`** — RMSE / LPD /
+ELPD-LOO / WAIC / AIC / BIC + the coverage-calibration curve; see §6.6), `min_distance`,
 `max_log_likelihood`, `aic`, `bic`. Methods: `n_samples`, `to_dict()`, `to_json(path=None)` — every
-field above (`band_metrics` included) is serialised to the JSON.
+field above (`band_metrics` and `predictive_metrics` included) is serialised to the JSON.
 
 > Metrics note: for the χ² distance, `chi2 = -2 ln L` (Gaussian), so `max_log_likelihood = -0.5·χ²_min`,
 > `AIC = χ²_min + 2k`, `BIC = χ²_min + k·ln(n)`.
@@ -405,6 +411,25 @@ in the fit's comparison space (`"flux"` → Jy, `"magnitude"` → mag). Returns
 this at its best fit and stores the result in `result.info["band_metrics"]`, so it is reported in
 `to_json()` automatically — no extra call needed for the standard fit output.
 
+**`predictive_metrics(result, lc, model=None, *, space="auto", likelihood="auto", fixed=None, levels=(0.5, 0.68, 0.8, 0.9, 0.95, 0.99), n_draws=400, seed=0)`**
+— the **posterior-predictive metric block** reported for every fit. Evaluates the model across `n_draws`
+posterior samples once and returns:
+- **`rmse`** — root-mean-squared error of `observed − posterior_mean_prediction`, per band + overall.
+- **`lpd`** — log predictive density `Σ_i log mean_s p(y_i|θ_s)` (the `lppd`; higher is better), `total`
+  and `per_point`.
+- **`elpd_loo`** — expected log predictive density by **PSIS-LOO** cross-validation (Vehtari 2017;
+  higher is better) with `p_loo`, `se`, `looic = −2·elpd_loo`, and `pareto_k_max` (>0.7 ⇒ unreliable);
+  uses `arviz` when installed (`None` otherwise).
+- **`waic`** — `waic` (deviance, lower is better), `elpd_waic`, `p_waic`, `se`.
+- **`aic` / `bic`** — carried through from the fit's best-fit likelihood.
+- **`coverage`** — the **calibration curve**: for each nominal `level`, the empirical fraction of
+  observations inside the central posterior-predictive interval, overall and per band (empirical ≈
+  nominal ⇒ calibrated).
+
+Every sampler attaches this to **`result.info["predictive_metrics"]`** (with `n_draws=200`) so it lands
+in `to_json()`. Note that broad tolerance/under-converged posteriors (ABC, un-converged SNPE) inflate
+`p_waic`/`p_loo` and their information criteria — a known, useful diagnostic, not a bug.
+
 ### 6.7 Validation — recovery, PPC, SBC  (`whisper_labia.validation`)
 
 Sampler-agnostic checks that a fit **recovered the truth** with **reliable uncertainties** (used by
@@ -453,7 +478,7 @@ Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `dev/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (212 tests, all passing)
+## 8. Test coverage (215 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -461,8 +486,8 @@ Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`
 | `test_bands.py` | 11 | Aliases, case-sensitivity, `group_bands`/`FILTER_LOOKUP`, `unmapped_bands`. |
 | `test_schema.py` | 11 | Validation, subsetting, `add_*`, `snr`/`select_snr`, `set_explosion_date`, upper limits. |
 | `test_loader.py` | 12 | AT2017GFO load, window/subset, grouping, `min_snr`, `explosion_date`, upper limits. |
-| `test_plotting.py` | 10 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers; `plot_corner` overlay/legend, common-params + log axes + array/empty errors; `plot_ppc` single/multi × flux/magnitude × panel-by band/method. |
-| `test_metrics.py` | 7 | WAIC keys + finite + better-fit-lower ordering, `fixed=`/subsampling, pointwise log-lik (Gaussian + upper-limits) summing to the total; `per_band_metrics` zero-at-truth, offset detection, and auto-attachment to `result.info['band_metrics']`/JSON. |
+| `test_plotting.py` | 11 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers; `plot_corner` overlay/legend, common-params + log axes + array/empty errors; `plot_ppc` single/multi × flux/magnitude × panel-by band/method; `plot_calibration` multi + per-band. |
+| `test_metrics.py` | 9 | WAIC keys + finite + better-fit-lower ordering, `fixed=`/subsampling, pointwise log-lik summing to the total; `per_band_metrics` zero-at-truth / offset / JSON; `predictive_metrics` RMSE/LPD/ELPD-LOO/WAIC/AIC-BIC/coverage block + auto-attach, and coverage-calibration for a good fit. |
 | `test_validation.py` | 4 | recovery z-score + coverage signs, PPC (reduced χ²≈1, predictive coverage, p≈0.5), SBC rank uniformity (calibrated vs edge-biased), `sbc_rank` bounds. |
 | `test_embeddings.py` | 6 | MLP/TCN embedding shapes + finite output, TCN receptive field covers the input, `build_embedding` dispatch + unknown-name error, `x_format` validation, ABC `simulate_noise` (n_jobs-reproducible, optional, noisy-vs-noiseless distance floor). |
 | `test_scatter.py` | 4 | Villar+17 scatter likelihood (formula vs hand calc, σ=0 reduces to Gaussian, pointwise sums, registry), MCMC recovers injected extra scatter (σ counted in AIC), ABC scatter validation + posterior column, ABC magnitude-space acceptance. |

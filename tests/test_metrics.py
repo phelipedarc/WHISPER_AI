@@ -111,3 +111,51 @@ def test_fit_reports_band_metrics_in_json():
     assert "band_metrics" in res.info
     bm = json.loads(res.to_json())["info"]["band_metrics"]
     assert "r" in bm["bands"] and bm["bands"]["r"]["n"] == 40
+
+
+def test_predictive_metrics_block_and_autoattach():
+    """predictive_metrics returns RMSE/LPD/ELPD-LOO/WAIC/AIC/BIC/coverage; samplers auto-attach it."""
+    import json
+    m = get_model("gaussian_rise")
+    t = np.linspace(0.1, 30, 40)
+    times = np.concatenate([t, t])
+    bands = np.array(["g"] * 40 + ["r"] * 40)
+    flux = m.predict(TRUE, times, bands)
+    lc = wp.LightCurve(time=times, band=bands, flux=flux + np.random.default_rng(0).normal(0, 0.1, 80),
+                       flux_err=np.full_like(flux, 0.1), name="syn")
+    prior = wp.Prior({k: wp.Uniform(0.5 * v, 1.5 * v) for k, v in TRUE.items()})
+    res = wp.fit_MCMC(lc, "gaussian_rise", prior=prior, nsteps=1200, burnin=300, seed=0)
+
+    pm = wp.predictive_metrics(res, lc, space="flux", n_draws=300)
+    # RMSE per band + overall
+    assert set(pm["rmse"]["bands"]) == {"g", "r"} and np.isfinite(pm["rmse"]["overall"])
+    # LPD
+    assert np.isfinite(pm["lpd"]["total"]) and np.isfinite(pm["lpd"]["per_point"])
+    # ELPD (PSIS-LOO via arviz) — present with the k diagnostic
+    assert pm["elpd_loo"] is not None
+    assert {"elpd_loo", "p_loo", "se", "looic", "pareto_k_max"} <= set(pm["elpd_loo"])
+    # WAIC deviance vs elpd sign convention; AIC/BIC carried through
+    assert pm["waic"]["waic"] == pytest.approx(-2.0 * pm["waic"]["elpd_waic"], rel=1e-6)
+    assert np.isfinite(pm["aic"]) and np.isfinite(pm["bic"])
+    # coverage-calibration curve at all requested levels, empirical in [0,1]
+    levels = [c["nominal"] for c in pm["coverage"]["overall"]]
+    assert levels == [0.5, 0.68, 0.8, 0.9, 0.95, 0.99]
+    assert all(0.0 <= c["empirical"] <= 1.0 for c in pm["coverage"]["overall"])
+
+    # auto-attached to the fit's JSON
+    info = json.loads(res.to_json())["info"]
+    assert "predictive_metrics" in info and "coverage" in info["predictive_metrics"]
+
+
+def test_predictive_metrics_coverage_calibrated_for_good_fit():
+    """A correct model + Gaussian noise gives empirical coverage close to nominal at each level."""
+    m = get_model("gaussian_rise")
+    t = np.linspace(0.1, 30, 120)
+    flux = m.predict(TRUE, t, None)
+    lc = wp.LightCurve(time=t, band=["r"] * 120, flux=flux + np.random.default_rng(1).normal(0, 0.1, 120),
+                       flux_err=np.full_like(flux, 0.1), name="syn")
+    prior = wp.Prior({k: wp.Uniform(0.5 * v, 1.5 * v) for k, v in TRUE.items()})
+    res = wp.fit_MCMC(lc, "gaussian_rise", prior=prior, nsteps=2000, burnin=500, seed=0)
+    pm = wp.predictive_metrics(res, lc, space="flux", n_draws=400)
+    for c in pm["coverage"]["overall"]:                    # empirical within 0.15 of nominal
+        assert abs(c["empirical"] - c["nominal"]) < 0.15

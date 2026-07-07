@@ -40,6 +40,21 @@ def attach_band_metrics(info, lc, model, best_params, space):
         pass
 
 
+def attach_predictive_metrics(result, lc, space, n_draws=200):
+    """Populate ``result.info['predictive_metrics']`` with the posterior predictive metric block.
+
+    RMSE (posterior-mean), LPD, ELPD (PSIS-LOO), WAIC, AIC/BIC and the coverage-calibration curve —
+    see :func:`whisper_labia.metrics.predictive_metrics`. Called after the result is built (it reuses
+    the fit's ``aic`` / ``bic``); ``n_draws`` bounds the extra forward-model evaluations. Best-effort:
+    a failure (slow/failing model, no likelihood) leaves the fit untouched.
+    """
+    try:
+        from ..metrics import predictive_metrics
+        result.info["predictive_metrics"] = predictive_metrics(result, lc, space=space, n_draws=n_draws)
+    except Exception:
+        pass
+
+
 @dataclass
 class SamplerResult:
     """Unified result for every Whisper sampler.

@@ -131,3 +131,14 @@ def test_plot_ppc_panel_by_band_override():
     fig = plot_ppc({"a": res, "b": res}, lc, panel_by="band", quantity="flux")
     assert len(fig.axes) >= 2
     plt.close(fig)
+
+
+def test_plot_calibration_multi_and_per_band():
+    from whisper_labia import plot_calibration
+    lc, res = _ppc_setup()
+    fig = plot_calibration({"a": res}, lc, n_draws=200)          # overall curve + diagonal
+    ax = fig.axes[0]
+    assert ax.get_xlabel() == "nominal credible level"
+    plt.close(fig)
+    fig2 = plot_calibration(res, lc, per_band=True, n_draws=200)  # one line per band + overall
+    plt.close(fig2)

@@ -24,8 +24,8 @@ from .io import (
     resolve_bands,
     unregister_manual_band,
 )
-from .plotting import CORNER_PALETTE, plot_corner, plot_light_curve, plot_ppc
-from .metrics import per_band_metrics, waic
+from .plotting import CORNER_PALETTE, plot_calibration, plot_corner, plot_light_curve, plot_ppc
+from .metrics import per_band_metrics, predictive_metrics, waic
 from .validation import (
     posterior_predictive_check,
     recovery_metrics,
@@ -58,7 +58,8 @@ from .samplers import (
 __all__ = [
     "__version__",
     # data + plotting
-    "LightCurve", "load_lightcurve", "plot_light_curve", "plot_ppc", "plot_corner", "CORNER_PALETTE",
+    "LightCurve", "load_lightcurve", "plot_light_curve", "plot_ppc", "plot_calibration",
+    "plot_corner", "CORNER_PALETTE",
     "group_bands", "FILTER_LOOKUP",
     "resolve_band", "resolve_bands", "LSST_BAND_INFO", "SvoUnavailable",
     "register_manual_band", "unregister_manual_band", "clear_manual_bands",
@@ -74,5 +75,6 @@ __all__ = [
     "fit_ABC", "fit_ABC_SMC", "fit_MCMC", "fit_SNPE", "fit", "SamplerResult", "register_sampler",
     "list_samplers",
     # metrics + validation
-    "waic", "per_band_metrics", "recovery_metrics", "posterior_predictive_check", "sbc_rank", "sbc_ranks",
+    "waic", "per_band_metrics", "predictive_metrics", "recovery_metrics", "posterior_predictive_check",
+    "sbc_rank", "sbc_ranks",
 ]

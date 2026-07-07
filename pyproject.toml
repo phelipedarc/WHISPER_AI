@@ -45,6 +45,7 @@ models = ["redback>=1.12"]    # physical transient models + priors (also pulls b
 svo = ["astroquery>=0.4.6"]   # SVO Filter Profile Service fallback for unknown bands
 dev = ["pytest", "pytest-cov", "build", "astroquery>=0.4.6"]
 sbi = ["sbi", "torch"]        # SNPE / NPE sampler (whisper_labia.samplers.snpe)
+loo = ["arviz>=0.15"]         # PSIS-LOO / ELPD in predictive_metrics (degrades to None without it)
 abc = ["pyabc"]               # Milestone 2
 
 [project.urls]

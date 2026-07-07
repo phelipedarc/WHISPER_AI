@@ -19,7 +19,13 @@ import warnings
 from ..distance import chi2_distance, get_distance
 from ..likelihood import make_likelihood
 from ..models import get_model
-from .base import BaseSampler, SamplerResult, attach_band_metrics, summarize_posterior
+from .base import (
+    BaseSampler,
+    SamplerResult,
+    attach_band_metrics,
+    attach_predictive_metrics,
+    summarize_posterior,
+)
 
 
 def _simulate_batch(predict, prior, distance, times, bands, obs_y, obs_err, indices, seed,
@@ -212,7 +218,7 @@ class ABCSampler(BaseSampler):
             "likelihood_space": lik.space,
         }
         attach_band_metrics(info, lc, model.name, best, space)
-        return SamplerResult(
+        result = SamplerResult(
             sampler="abc", model=model.name, parameters=names,
             samples=samples, summary=summarize_posterior(samples, names),
             best_params=best, n_data=n, n_params=k, runtime_s=runtime, info=info,
@@ -220,6 +226,8 @@ class ABCSampler(BaseSampler):
             aic=float(-2.0 * max_log_likelihood + 2 * k),
             bic=float(-2.0 * max_log_likelihood + k * np.log(n)),
         )
+        attach_predictive_metrics(result, lc, space)
+        return result
 
 
 def fit_ABC(lc, model="flare", prior=None, **kwargs) -> SamplerResult:

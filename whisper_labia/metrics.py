@@ -165,3 +165,129 @@ def per_band_metrics(lc, model, params, *, space="auto", fixed=None):
     per_band = {str(b): _stats(resid[bands == b]) for b in np.unique(bands)}
     unit = "mag" if lik.space == "magnitude" else "Jy"
     return {"space": lik.space, "unit": unit, "bands": per_band, "overall": _stats(resid)}
+
+
+#: default nominal levels for the coverage-calibration curve.
+DEFAULT_COVERAGE_LEVELS = (0.5, 0.68, 0.8, 0.9, 0.95, 0.99)
+
+
+def predictive_metrics(result, lc, model=None, *, space="auto", likelihood="auto", fixed=None,
+                       levels=DEFAULT_COVERAGE_LEVELS, n_draws=400, seed=0):
+    """Posterior predictive / model-comparison metrics from a fit, for the JSON report.
+
+    Evaluates the model across ``n_draws`` posterior samples once and returns, in one dict:
+
+    * **rmse** — root-mean-squared error of ``observed - posterior_mean_prediction`` (per band + overall),
+      in the fit's comparison space (Jy for flux, mag for magnitude).
+    * **lpd** — log predictive density: ``sum_i log mean_s p(y_i | θ_s)`` (the ``lppd``; higher is
+      better), with the per-point mean.
+    * **elpd_loo** — expected log predictive density by **PSIS-LOO** cross-validation (Vehtari et al.
+      2017; higher is better), with ``p_loo``, standard error ``se``, ``looic = -2·elpd_loo`` and the
+      max Pareto-``k`` diagnostic (``k > 0.7`` ⇒ LOO estimate unreliable).
+    * **waic** — WAIC on the deviance scale (``-2·elpd_waic``; lower is better), with ``elpd_waic``,
+      ``p_waic`` and ``se``.
+    * **aic** / **bic** — from the fit's best-fit likelihood (lower is better), carried through from
+      ``result`` when available.
+    * **coverage** — the calibration curve: for each nominal ``level`` the *empirical* fraction of
+      observations inside the central posterior-predictive interval (model + observation noise), overall
+      and per band. A calibrated fit has empirical ≈ nominal at every level.
+
+    ``result`` is a :class:`SamplerResult` (uses ``.samples`` / ``.model`` / ``.aic`` / ``.bic``); a bare
+    posterior (DataFrame/array) also works but then ``aic`` / ``bic`` are omitted. LOO/WAIC use ``arviz``
+    when installed and fall back to a plug-in WAIC otherwise.
+    """
+    samples, names, model_name = _resolve_samples(result, model)
+    m = get_model(model if model is not None else model_name)
+    if m is None:
+        raise ValueError("No model given and the posterior has no .model; pass model=...")
+    names = list(m.parameters) if names is None else names
+
+    n_total = samples.shape[0]
+    if n_total > n_draws:
+        samples = samples[np.random.default_rng(seed).choice(n_total, size=n_draws, replace=False)]
+    lik = make_likelihood(lc, kind=likelihood, space=space)
+    if not hasattr(lik, "log_likelihood_pointwise"):
+        raise TypeError(f"{type(lik).__name__} has no log_likelihood_pointwise(); predictive_metrics "
+                        "needs a Gaussian (with/without upper limits) likelihood.")
+    times, bands = np.asarray(lc.time, float), np.asarray(lc.band).astype(str)
+    y = np.asarray(lik.y, float)
+    sigma = np.asarray(lik.sigma, float)
+    extra = dict(fixed or {})
+
+    preds, lls = [], []
+    for row in samples:
+        mf = m.predict({**extra, **{nm: float(v) for nm, v in zip(names, row)}}, times, bands)
+        preds.append(np.asarray(lik.model_in_space(mf), float))
+        lls.append(np.asarray(lik.log_likelihood_pointwise(mf), float))
+    P = np.vstack(preds)                                        # (draws, data) in comparison space
+    ll = np.vstack(lls)
+    good = np.all(np.isfinite(ll), axis=1)
+    ll, P_ok = ll[good], P[good]
+    n_used = ll.shape[0]
+
+    # RMSE vs the posterior-MEAN prediction (per band + overall).
+    mean_pred = P_ok.mean(axis=0)
+    resid = y - mean_pred
+
+    def _rmse(r):
+        r = r[np.isfinite(r)]
+        return float(np.sqrt(np.mean(r ** 2))) if r.size else float("nan")
+
+    rmse = {"overall": _rmse(resid), "bands": {str(b): _rmse(resid[bands == b]) for b in np.unique(bands)}}
+
+    # LPD (log pointwise predictive density).
+    lppd_i = logsumexp(ll, axis=0) - np.log(n_used)
+    lpd = {"total": float(np.sum(lppd_i)), "per_point": float(np.mean(lppd_i))}
+
+    # ELPD (PSIS-LOO) and WAIC via arviz when available; plug-in WAIC otherwise.
+    loo_out, waic_out = _loo_waic(ll)
+
+    # Coverage-calibration curve: posterior-predictive intervals WITH observation noise.
+    rng = np.random.default_rng(seed + 1)
+    y_rep = P_ok + rng.normal(0.0, np.where(np.isfinite(sigma) & (sigma > 0), sigma, 0.0), size=P_ok.shape)
+    cov_overall, cov_bands = [], {str(b): [] for b in np.unique(bands)}
+    for q in levels:
+        lo, hi = np.percentile(y_rep, [50 * (1 - q), 50 * (1 + q)], axis=0)
+        inside = (y >= np.minimum(lo, hi)) & (y <= np.maximum(lo, hi))
+        cov_overall.append({"nominal": float(q), "empirical": float(np.mean(inside))})
+        for b in np.unique(bands):
+            sel = bands == b
+            cov_bands[str(b)].append({"nominal": float(q), "empirical": float(np.mean(inside[sel]))})
+    coverage = {"levels": [float(q) for q in levels], "overall": cov_overall, "bands": cov_bands}
+
+    out = {"space": lik.space, "unit": "mag" if lik.space == "magnitude" else "Jy",
+           "n_draws": int(n_used), "rmse": rmse, "lpd": lpd, "elpd_loo": loo_out, "waic": waic_out,
+           "coverage": coverage}
+    for key in ("aic", "bic"):
+        v = getattr(result, key, None)
+        if v is not None and np.isfinite(v):
+            out[key] = float(v)
+    return out
+
+
+def _loo_waic(ll):
+    """PSIS-LOO + WAIC from a (draws, data) pointwise log-likelihood matrix.
+
+    WAIC is the standard plug-in estimator (Watanabe 2010 / Gelman et al. 2014). LOO uses ``arviz``'s
+    Pareto-smoothed importance sampling (Vehtari et al. 2017) with its ``k`` diagnostic when installed;
+    without arviz, ``elpd_loo`` is ``None`` (PSIS smoothing is not reimplemented here).
+    """
+    n_samp, n_data = ll.shape
+    lppd_i = logsumexp(ll, axis=0) - np.log(n_samp)
+    p_waic_i = np.var(ll, axis=0, ddof=1)
+    elpd_waic_i = lppd_i - p_waic_i
+    waic_out = {
+        "waic": float(-2.0 * np.sum(elpd_waic_i)), "elpd_waic": float(np.sum(elpd_waic_i)),
+        "p_waic": float(np.sum(p_waic_i)),
+        "se": float(np.sqrt(n_data * np.var(-2.0 * elpd_waic_i, ddof=1))) if n_data > 1 else float("nan")}
+    loo_out = None
+    try:
+        import arviz as az
+        loo = az.loo(az.from_dict(posterior={"_": np.zeros((1, n_samp))},
+                                  log_likelihood={"y": ll[None]}), pointwise=True)
+        loo_out = {"elpd_loo": float(loo.elpd_loo), "p_loo": float(loo.p_loo), "se": float(loo.se),
+                   "looic": float(-2.0 * float(loo.elpd_loo)),
+                   "pareto_k_max": float(np.nanmax(np.asarray(loo.pareto_k)))}
+    except Exception:
+        pass
+    return loo_out, waic_out

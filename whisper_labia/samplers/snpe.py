@@ -30,7 +30,13 @@ import numpy as np
 import pandas as pd
 
 from ..models import get_model
-from .base import BaseSampler, SamplerResult, attach_band_metrics, summarize_posterior
+from .base import (
+    BaseSampler,
+    SamplerResult,
+    attach_band_metrics,
+    attach_predictive_metrics,
+    summarize_posterior,
+)
 
 
 def _snpe_logl_worker(args):
@@ -640,6 +646,7 @@ class SNPESampler(BaseSampler):
             aic=float(-2.0 * max_log_likelihood + 2 * k),
             bic=float(-2.0 * max_log_likelihood + k * np.log(n)),
         )
+        attach_predictive_metrics(result, lc, space)
         # Attach the trained sbi objects for resampling / pairplot (not part of to_json).
         result.posterior = posterior
         result.posteriors = posteriors
