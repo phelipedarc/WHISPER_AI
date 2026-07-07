@@ -1,9 +1,9 @@
-"""Rendering for the Villar+17 AT2017GFO analysis (see scripts/at2017gfo_villar.py).
+"""Rendering for the Villar+17 AT2017GFO analysis (see villar.py).
 
 Reads the cached ``villar_*.json`` / ``.npz`` results and produces: per-parameter posterior
 histograms annotated with median ± CI, an all-method corner, per-method posterior-predictive light
 curves (magnitude space, 3 bands), a parameter/runtime summary figure, and
-``docs/REPORT_at2017gfo_villar.md``.
+``reports/REPORT_at2017gfo_villar.md``.
 """
 from __future__ import annotations
 
@@ -460,7 +460,7 @@ def _report(out, res, samplers, params, labels, ms, peak_info=None):
               "- **Amortized inference.** Once trained, NPE conditions a *new* AT2017GFO-like light "
               "curve in ~10–80 ms (the per-object column) versus a full refit for MCMC — the payoff of "
               "neural SBI when many objects share one model.", ""]
-    fig_dir = "figures/" + os.path.basename(out.rstrip("/"))   # at2017gfo_villar[_full]
+    fig_dir = "../figures/" + os.path.basename(out.rstrip("/"))  # relative to reports/ -> figures/
     lines += ["## Figures", "",
               "### Posterior histograms", "",
               "Per-parameter marginal posteriors (rows) for every method (columns), each annotated "
@@ -489,6 +489,7 @@ def _report(out, res, samplers, params, labels, ms, peak_info=None):
               "where available (dashed line = Villar+17), and the end-to-end wall time per method.", "",
               f"![summary]({fig_dir}/villar_summary.png)", ""]
     report_name = "REPORT_" + os.path.basename(out.rstrip("/")) + ".md"   # ..._villar[_full].md
-    path = os.path.join(os.path.dirname(out.rstrip("/")), "..", report_name)
+    # out = analysis/at2017gfo_villar/figures/<name>;  reports live in analysis/at2017gfo_villar/reports/
+    path = os.path.join(os.path.dirname(out.rstrip("/")), "..", "reports", report_name)
     path = os.path.abspath(path)
     open(path, "w").write("\n".join(lines))

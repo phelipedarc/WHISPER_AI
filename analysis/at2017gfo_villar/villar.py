@@ -15,8 +15,8 @@ distance-based ABC family fits the 7 physical parameters only: a chi-square reje
 monotonically penalised by extra simulation noise, so a noise-level parameter is not identifiable by
 distance-based ABC (verified on synthetic data — its posterior collapses toward zero scatter).
 
-    python scripts/at2017gfo_villar.py fit mcmc          # one method at a time (parallel-friendly)
-    python scripts/at2017gfo_villar.py plot              # figures + REPORT_at2017gfo_villar.md
+    python analysis/at2017gfo_villar/villar.py fit mcmc   # one method at a time (parallel-friendly)
+    python analysis/at2017gfo_villar/villar.py plot       # figures + reports/REPORT_at2017gfo_villar.md
 """
 from __future__ import annotations
 
@@ -34,11 +34,12 @@ from whisper_labia.models import register_model
 from whisper_labia.models.two_component_kilonova import two_component_kilonova_flux
 from whisper_labia.priors import LogUniform, Prior, Uniform
 
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SELF = os.path.dirname(os.path.abspath(__file__))            # analysis/at2017gfo_villar/
+ROOT = os.path.dirname(os.path.dirname(SELF))                # repo root
 # VILLAR_FULL=1 -> full UV-optical-NIR dataset (11 bands spanning Swift-UV to 2MASS-Ks); default is the
 # g/r/i-only reduction. TMAX_DAYS restricts the light curve to the early kilonova (0-30 d rest of decay).
 FULL = os.environ.get("VILLAR_FULL") == "1"
-# VILLAR_PREPROCESS=1 -> the cleaned UVOIR reduction (scripts/preprocess_at2017gfo.py): Swift-UVOT
+# VILLAR_PREPROCESS=1 -> the cleaned UVOIR reduction (analysis/at2017gfo_villar/preprocess_at2017gfo.py): Swift-UVOT
 # uvw1 dropped, SNR>5 (was >=3), and near-simultaneous multi-telescope duplicates in the same band
 # collapsed to one point per (band, round(MJD,2)). Implies FULL (it has no g/r/i-only counterpart).
 PREPROCESS = os.environ.get("VILLAR_PREPROCESS") == "1"
@@ -47,10 +48,12 @@ FULL = FULL or PREPROCESS        # preprocess is a specialization of the full ru
 # or "flux" (additive-flux scatter). Set VILLAR_SPACE=flux for the flux-space comparison.
 SPACE = os.environ.get("VILLAR_SPACE", "magnitude")
 _SPACE_SUFFIX = "_flux" if SPACE == "flux" else ""            # magnitude = no suffix
-DATA = os.path.join(HERE, "tests", "data",
-                    "at2017gfo_full_preprocessed.csv" if PREPROCESS
-                    else "at2017gfo_full.csv" if FULL else "at2017gfo.csv")
-OUT = os.path.join(HERE, "docs", "figures",
+# The full/preprocessed UVOIR datasets live beside this analysis; the g/r/i reduction is a shared
+# pytest fixture and stays under tests/data/.
+DATA = (os.path.join(SELF, "data", "at2017gfo_full_preprocessed.csv") if PREPROCESS
+        else os.path.join(SELF, "data", "at2017gfo_full.csv") if FULL
+        else os.path.join(ROOT, "tests", "data", "at2017gfo.csv"))
+OUT = os.path.join(SELF, "figures",
                    ("at2017gfo_villar_full_preprocessed" if PREPROCESS
                     else "at2017gfo_villar_full" if FULL else "at2017gfo_villar") + _SPACE_SUFFIX)
 BANDS = (["B", "g", "V", "r", "i", "z", "Y", "J", "H", "Ks"] if PREPROCESS else       # UVOT uvw1 dropped
@@ -280,7 +283,8 @@ if __name__ == "__main__":
     if len(a) == 2 and a[0] == "fit":
         fit(a[1])
     elif a and a[0] == "plot":
-        from at2017gfo_villar_plots import plot
+        sys.path.insert(0, SELF)                 # sibling module, regardless of CWD
+        from villar_plots import plot
         plot(OUT, SAMPLERS, PARAMS, LABELS, BANDS)
     else:
         raise SystemExit(__doc__)

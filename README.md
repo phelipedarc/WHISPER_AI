@@ -68,12 +68,25 @@ wp.plot_light_curve(lc, layout="report")     # apparent-mag + flux overview, all
 - **Compare & select** — overlay every sampler's posterior with **`plot_corner`** (publication-ready,
   dark palette), and score fits with cross-sampler-comparable **AIC/BIC** or the Bayesian **`waic`**.
 
+## Sampler runtimes (real data)
+
+End-to-end wall-clock time for the Villar+2017-style two-component kilonova fit of **AT2017GFO**
+(preprocessed UVOIR: 10 bands, SNR > 5, one point per band per epoch), one bar per sampler:
+
+![sampler runtimes on AT2017GFO](analysis/at2017gfo_villar/figures/at2017gfo_villar_full_preprocessed/villar_runtime.png)
+
+The distance-based **ABC** family is cheapest; the amortized/sequential **neural** methods sit in the
+middle (and infer a *new* object in ~ms once trained); exact **MCMC** is the most expensive here (a
+converged 8-D chain over the redback likelihood). Full four-way parameter comparison — g/r/i,
+full-UVOIR magnitude, full-UVOIR flux, and this preprocessed reduction — in the
+[`analysis/at2017gfo_villar/`](analysis/at2017gfo_villar/) reports.
+
 ## Learn more
 
 - 📓 **[Quick-start notebook](examples/at2017gfo_quickstart.ipynb)** — AT2017GFO end-to-end with a custom model (ABC + SNPE).
 - 📘 **[Tutorial](docs/TUTORIAL.md)** — a hands-on tour of every feature, with plots.
 - 📊 **[AT2017GFO report](docs/REPORT_at2017gfo.md)** — ABC vs ABC-SMC across three models.
-- ⏱️ **[Benchmark](docs/BENCHMARK.md)** — timed flux-vs-magnitude kilonova sanity check (ABC/MCMC/SNPE) on AT2017GFO.
+- ⏱️ **[Benchmark](sanity_check/BENCHMARK.md)** — timed flux-vs-magnitude kilonova sanity check (ABC/MCMC/SNPE) on AT2017GFO.
 - 🧩 **[Extending Whisper](docs/EXTENDING.md)** — add your own model, sampler, likelihood, or distance.
 - 🏛️ **[Design rationale](docs/DESIGN.md)** — the *why* behind the architecture, and known limitations.
 - 📑 **[API reference](docs/API_REFERENCE.md)** — every function and its arguments.

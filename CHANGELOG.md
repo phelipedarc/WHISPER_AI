@@ -5,14 +5,31 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Repository reorganization — analysis / benchmarks / dev separated from the package
+- **`analysis/at2017gfo_villar/`** now holds the full AT2017GFO Villar+17 study — `villar.py`,
+  `villar_plots.py`, `fetch_at2017gfo_full.py`, `preprocess_at2017gfo.py`, `runtime_plot.py`, plus its
+  own `data/`, `figures/` and `reports/`. **`sanity_check/`** holds the synthetic-recovery benchmarks
+  (`sanity_check.py`, `benchmark_*.py`, `corner_kilonova_benchmark.py`, `compare_samplers.py`,
+  `sanity_mck19_modes.py`, `BENCHMARK.md`) and their figures. **`dev/`** holds one-off demos and
+  superseded fit/report scripts. The importable package (`whisper_labia/`) and the `tests/` suite are
+  untouched; only the g/r/i `tests/data/at2017gfo.csv` stays a shared fixture.
+- **Preprocessed AT2017GFO reduction** (`analysis/at2017gfo_villar/preprocess_at2017gfo.py`): drops the
+  lone Swift-UVOT `uvw1` band, cuts to SNR > 5, and collapses near-simultaneous same-band duplicates to
+  one point per `round(MJD, 2)` epoch (607 → 416 detections). Fit by all 7 methods, giving a fourth
+  AT2017GFO variant alongside g/r/i, full-UVOIR magnitude, and full-UVOIR flux. A standalone
+  wall-clock benchmark bar chart (`villar_runtime.png`) is linked from the README.
+- **Early-time peak-timing diagnostic** added to the report interpretation: the best-fit curve peaks a
+  few tenths of a day after the brightest observed point in the reddest optical bands — present in both
+  magnitude and flux space, so a model-adequacy limitation rather than a units/weighting artifact.
+
 ### Full UV–optical–NIR AT2017GFO application + SNPE robustness against pathological real-data conditioning
-- **Full-UVOIR data.** `scripts/fetch_at2017gfo_full.py` pulls the complete AT2017GFO photometry from
+- **Full-UVOIR data.** `analysis/at2017gfo_villar/fetch_at2017gfo_full.py` pulls the complete AT2017GFO photometry from
   the Open Astronomy Catalog (607 detections, 18 bands, 0.5–25 d, Vega→AB converted where needed) into
-  `tests/data/at2017gfo_full.csv`. `two_component_kilonova._redback_band` now maps any band redback's
+  `analysis/at2017gfo_villar/data/at2017gfo_full.csv`. `two_component_kilonova._redback_band` now maps any band redback's
   filter table knows (`H`/`J`/`Ks`/`Y` → 2MASS, `U`/`B`/`V`/`R`/`I` → Bessell, `uvot::*` → Swift UVOT),
   not just optical grizy, so the model can be fit to the full UV→optical→NIR range.
-  `docs/PLAN_at2017gfo_fullband.md` records the acquisition plan and cost budget.
-- **Physical ejecta-velocity prior.** `at2017gfo_villar.py`'s real-data prior tightened
+  `analysis/at2017gfo_villar/PLAN_fullband.md` records the acquisition plan and cost budget.
+- **Physical ejecta-velocity prior.** `analysis/at2017gfo_villar/villar.py`'s real-data prior tightened
   `vej_1`/`vej_2` from `Uniform(0.01, 0.7)` to `Uniform(0.05, 0.3)` (physical kilonova range) — the old
   bound let the MAP rail to an unphysical 0.7 c, a genuine-but-unphysical optimum caused by the
   permissive prior combined with g/r/i-only data underconstraining the red component. With the full
@@ -53,13 +70,13 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
   sequential/truncated SNPE's internal proposal-restriction step (`get_density_thresholder`) reuses it
   instead of re-deriving it the slow way. `result.info["final_sample_method"]`
   (`"rejection"`/`"mcmc_fallback"`) and `["final_sample_acceptance_rate"]` record which path was taken.
-  Also fixed the same exposure in `scripts/at2017gfo_villar.py`'s amortized-resample timing benchmark.
+  Also fixed the same exposure in `analysis/at2017gfo_villar/villar.py`'s amortized-resample timing benchmark.
 - **PPC plot readability.** Taller per-band posterior-predictive panels (shared y-axis, range set from
   data + model medians rather than σ-inflated tails) so bands separate cleanly. New supplementary
   **`villar_ppc_grid.png`**: the same check zoomed to the first 10 days, laid out as one square panel
   per method with larger labels and bolder, edge-outlined data markers, for a closer read of band-by-band
   structure where the two components pull apart fastest.
-- **Rail/σ reporting fixes** in `at2017gfo_villar_plots.py`: prior-rail detection now judges proximity
+- **Rail/σ reporting fixes** in `analysis/at2017gfo_villar/villar_plots.py`: prior-rail detection now judges proximity
   to the bound *value* (not fraction of prior range, which misreported well-constrained values under
   wide priors like κ∈[1,30]) and is keyed on the MCMC reference posterior rather than any single
   (possibly broad neural) method; the reported σ is MCMC's own value with space-aware units (mag vs Jy)
@@ -82,10 +99,10 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
   Sampled parameters are now `prior.names` (a prior may carry non-model parameters).
 - **MCMC `n_jobs`**: emcee walker likelihoods in a process pool — makes an 8-D fit with the ~0.1 s
   redback kilonova likelihood run in minutes.
-- **`scripts/at2017gfo_villar.py` + `_plots.py`**: the real-world application — the
+- **`analysis/at2017gfo_villar/villar.py` + `villar_plots.py`**: the real-world application — the
   `two_component_kilonova` with **κ_blue = 0.5 fixed**, z fixed, κ_red + both temperature floors
   free + σ, fit in magnitude space by 7 methods (MCMC, ABC, ABC-SMC, NPE-MDN, NPE-NSF, SNPE-5r-NSF,
-  SNPE-5r-NSF+TCN), rendered to `docs/REPORT_at2017gfo_villar.md` with annotated posterior
+  SNPE-5r-NSF+TCN), rendered to `analysis/at2017gfo_villar/reports/REPORT_at2017gfo_villar.md` with annotated posterior
   histograms, an all-method corner, magnitude-space posterior-predictive light curves and a
   parameter/runtime summary.
 

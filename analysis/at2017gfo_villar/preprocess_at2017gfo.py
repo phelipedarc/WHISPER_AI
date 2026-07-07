@@ -7,7 +7,7 @@ Three cuts, in order:
 1. **Drop ``uvot::uvw1``** — the sole Swift-UVOT band in the analysis; its handful of points sit at
    the very edge of the model's validity (in the WORST-modelled part of the ejecta), earn the least
    redback-filter-mapping confidence, and are the noisiest points in the set (see
-   ``docs/PLAN_at2017gfo_fullband.md``).
+   ``PLAN_fullband.md``).
 2. **SNR > 5** (was >= 3) — a stricter photometric-quality cut, using WHISPER's own
    ``mag_err_to_snr`` (Pogson: ``SNR = (2.5/ln10) / sigma_mag``) so it matches exactly what
    ``LightCurve.select_snr``/``load_lightcurve(min_snr=...)`` would compute downstream.
@@ -18,7 +18,7 @@ Three cuts, in order:
 
 Output columns match ``load_lightcurve``: ``event,time,magnitude,e_magnitude,band,system``.
 
-    python scripts/preprocess_at2017gfo.py     # tests/data/at2017gfo_full.csv -> ..._preprocessed.csv
+    python analysis/at2017gfo_villar/preprocess_at2017gfo.py   # data/at2017gfo_full.csv -> ..._preprocessed.csv
 """
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ import pandas as pd
 
 from whisper_labia.io.photometry import mag_err_to_snr
 
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-IN = os.path.join(HERE, "tests", "data", "at2017gfo_full.csv")
-OUT = os.path.join(HERE, "tests", "data", "at2017gfo_full_preprocessed.csv")
+SELF = os.path.dirname(os.path.abspath(__file__))            # analysis/at2017gfo_villar/
+IN = os.path.join(SELF, "data", "at2017gfo_full.csv")
+OUT = os.path.join(SELF, "data", "at2017gfo_full_preprocessed.csv")
 DROP_BANDS = ["uvot::uvw1"]
 MIN_SNR = 5.0
 

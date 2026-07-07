@@ -418,7 +418,7 @@ res = wp.fit_SNPE(
   (CUDA when available, else CPU; a GPU request with no CUDA warns and falls back). With
   `predict_torch` the GPU also runs the simulator; `training_batch_size`/`stop_after_epochs` (passed
   through to `sbi`) are the training-speed levers — `sanity_check/benchmark_snpe_device.py` and
-  [`docs/BENCHMARK.md`](BENCHMARK.md) carry the measurements.
+  [`sanity_check/BENCHMARK.md`](../sanity_check/BENCHMARK.md) carry the measurements.
 - **Amortized reuse** — with `num_rounds=1` (NPE) the trained `result.posterior` infers a **new**
   same-grid observation in ~10–100 ms: `result.posterior.sample((2000,), x=result.format_x(new_flux))`
   — no refit per object.
@@ -445,7 +445,7 @@ fig = wp.plot_corner(
 ```
 
 It uses a dark, colourblind-distinct palette (`wp.CORNER_PALETTE`), shared axis ranges, contour lines +
-filled marginals, and a legend — publication-ready. See [`docs/BENCHMARK.md`](BENCHMARK.md) for the
+filled marginals, and a legend — publication-ready. See [`sanity_check/BENCHMARK.md`](../sanity_check/BENCHMARK.md) for the
 four-sampler AT2017GFO corner.
 
 For **model selection**, `AIC`/`BIC` on each result are now computed from the exact Gaussian likelihood

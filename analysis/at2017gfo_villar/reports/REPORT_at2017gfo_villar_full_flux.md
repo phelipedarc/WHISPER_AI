@@ -49,28 +49,28 @@ $$\ln\mathcal{L} = -\tfrac{1}{2}\sum_i\left[\frac{(O_i-M_i)^2}{\sigma_i^2+\sigma
 
 Per-parameter marginal posteriors (rows) for every method (columns), each annotated with its median ± 68% CI; each variable shares one x-range across methods for direct comparison. σ is *not fitted* by the distance-based ABC family.
 
-![posterior histograms](figures/at2017gfo_villar_full_flux/villar_hist.png)
+![posterior histograms](../figures/at2017gfo_villar_full_flux/villar_hist.png)
 
 ### Corner plot
 
 Joint posteriors of all fitted parameters (ejecta masses shown as log₁₀), every method overlaid. The neural and ABC methods overlap in a broad central region while MCMC (dark blue) sits apart in its sharp, prior-edge MAP — the mode tension made visual, including the parameter correlations (e.g. M_ej^red–v_ej^red, κ_red–T_floor^red).
 
-![corner plot](figures/at2017gfo_villar_full_flux/villar_corner.png)
+![corner plot](../figures/at2017gfo_villar_full_flux/villar_corner.png)
 
 ### Posterior-predictive light curves
 
 Each method's 95% posterior-predictive model band in g/r/i (coloured) over the AT2017GFO photometry, with the per-panel χ²/dof (vs reported errors and vs errors ⊕ σ) and 95% coverage. MCMC gives the tightest, best-tracking band; the neural methods carry wider bands reflecting the marginal σ uncertainty.
 
-![posterior-predictive light curves](figures/at2017gfo_villar_full_flux/villar_ppc.png)
+![posterior-predictive light curves](../figures/at2017gfo_villar_full_flux/villar_ppc.png)
 
 ### Posterior-predictive light curves — early time (zoom)
 
 The same posterior-predictive check, zoomed to the first 10 days (where the two components pull apart fastest) and laid out as one square panel per method for a closer read of the band-by-band structure.
 
-![posterior-predictive light curves, early time](figures/at2017gfo_villar_full_flux/villar_ppc_grid.png)
+![posterior-predictive light curves, early time](../figures/at2017gfo_villar_full_flux/villar_ppc_grid.png)
 
 ### Summary — medians & runtime
 
 Parameter medians ± 68% CI across methods, each normalised to the Villar+2017 value where available (dashed line = Villar+17), and the end-to-end wall time per method.
 
-![summary](figures/at2017gfo_villar_full_flux/villar_summary.png)
+![summary](../figures/at2017gfo_villar_full_flux/villar_summary.png)

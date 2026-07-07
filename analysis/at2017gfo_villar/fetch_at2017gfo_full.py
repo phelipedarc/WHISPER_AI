@@ -11,7 +11,7 @@ name is one redback (``redback/tables/filters.csv``) natively understands, so th
 translation. Requires network; the OAC API cert isn't in the container trust store, so we fetch with
 ``verify=False`` (data is public, read-only).
 
-    python scripts/fetch_at2017gfo_full.py            # -> tests/data/at2017gfo_full.csv
+    python analysis/at2017gfo_villar/fetch_at2017gfo_full.py    # -> data/at2017gfo_full.csv
 """
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ import urllib3
 
 urllib3.disable_warnings()
 
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(HERE, "tests", "data", "at2017gfo_full.csv")
+SELF = os.path.dirname(os.path.abspath(__file__))            # analysis/at2017gfo_villar/
+OUT = os.path.join(SELF, "data", "at2017gfo_full.csv")
 T_MERGER = 57982.529            # GW170817 merger, MJD (Abbott+2017)
 OAC = ("https://api.astrocats.space/AT2017gfo/photometry/"
        "time+magnitude+e_magnitude+band+system+instrument+telescope?format=csv")

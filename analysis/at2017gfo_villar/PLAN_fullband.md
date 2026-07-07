@@ -10,7 +10,7 @@ blue parameters recover cleanly near Villar+2017. Villar+2017 avoided this by fi
 constrained.
 
 ## Groundwork already done (verified, in the repo)
-- **Fetcher** `scripts/fetch_at2017gfo_full.py` → `tests/data/at2017gfo_full.csv`. Pulls the complete
+- **Fetcher** `fetch_at2017gfo_full.py` → `data/at2017gfo_full.csv`. Pulls the complete
   photometry from the Open Astronomy Catalog (`api.astrocats.space`, fetched with `verify=False` — the
   container lacks the CA cert; data is public/read-only), converts the ~18 Vega points to AB, keeps
   post-merger detections with errors, and writes WHISPER's `event,time,magnitude,e_magnitude,band,system`
@@ -37,7 +37,7 @@ bands** and rejects NIR/UV names. It must **pass through any band redback's filt
 3. Test: `test_two_component_kilonova.py` gains a case asserting NIR/UV bands map + predict is finite.
 
 ## Analysis
-Parametrize `scripts/at2017gfo_villar.py` to take a **data file + band list** (default stays g/r/i for
+Parametrize `villar.py` to take a **data file + band list** (default stays g/r/i for
 reproducibility; `--full` uses `at2017gfo_full.csv` with all 18 bands). Everything else is unchanged:
 the Villar+17 two-component model (κ_blue = 0.5 fixed, z fixed), the physical velocity prior (0.05–0.3 c),
 the free scatter σ, magnitude space, and the same **7 samplers** (MCMC, ABC, ABC-SMC, NPE-MDN, NPE-NSF,
@@ -70,11 +70,11 @@ UVOIR two-component kilonova fit comparable to the literature.
 - **HST 1–2-point filters** (F336W, F475W, …) are dropped by default (sparse, instrument-specific).
 
 ## Checklist
-- [x] Fetcher + full-band CSV (`scripts/fetch_at2017gfo_full.py`, `tests/data/at2017gfo_full.csv`)
+- [x] Fetcher + full-band CSV (`fetch_at2017gfo_full.py`, `data/at2017gfo_full.csv`)
 - [x] Verify redback filter support + WHISPER ingestion
 - [x] Extend `_redback_band` for NIR/UV pass-through via sncosmo names (+ test); **end-to-end predict
       over all 18 bands verified finite** (lowercase grizy→LSST, uppercase UBVRI→Bessell, JHKKs→2MASS,
       `uvot::*`→Swift UVOT)
-- [ ] `--full` / band-list option in `scripts/at2017gfo_villar.py`
+- [ ] `--full` / band-list option in `villar.py`
 - [ ] Run 7 methods on the full-band data; render figures + report
 - [ ] Report: red-component now constrained; compare g/r/i vs full-UVOIR side by side
