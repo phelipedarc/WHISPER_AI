@@ -411,7 +411,7 @@ in the fit's comparison space (`"flux"` → Jy, `"magnitude"` → mag). Returns
 this at its best fit and stores the result in `result.info["band_metrics"]`, so it is reported in
 `to_json()` automatically — no extra call needed for the standard fit output.
 
-**`predictive_metrics(result, lc, model=None, *, space="auto", likelihood="auto", fixed=None, levels=(0.5, 0.68, 0.8, 0.9, 0.95, 0.99), n_draws=400, seed=0)`**
+**`predictive_metrics(result, lc, model=None, *, space="auto", likelihood="auto", scatter_param="auto", fixed=None, levels=(0.5, 0.68, 0.8, 0.9, 0.95, 0.99), n_draws=400, seed=0)`**
 — the **posterior-predictive metric block** reported for every fit. Evaluates the model across `n_draws`
 posterior samples once and returns:
 - **`rmse`** — root-mean-squared error of `observed − posterior_mean_prediction`, per band + overall.
@@ -425,6 +425,19 @@ posterior samples once and returns:
 - **`coverage`** — the **calibration curve**: for each nominal `level`, the empirical fraction of
   observations inside the central posterior-predictive interval, overall and per band (empirical ≈
   nominal ⇒ calibrated).
+- **`scatter_param`** — the posterior column used as the extra-scatter σ (or `null`).
+
+**Scatter-aware predictive density.** The log-predictive quantities (LPD, WAIC, PSIS-LOO) and the
+coverage intervals are evaluated under the *same* generative model the fit optimised. When the fit has a
+free **extra-scatter** σ (Villar+17; a "jitter"/intrinsic-scatter term à la Hogg, Bovy & Lang 2010), the
+pointwise density is the scatter-augmented Gaussian `𝒩(M_i, σ_i²+σ_s²)` with **each draw's own** σ_s,
+and the predictive replications draw from the same inflated variance. Dropping σ mis-specifies the
+density: for high-SNR photometry it collapses, so `p_waic`/`p_loo` explode and coverage collapses —
+folding σ back in restores near-nominal coverage and sane WAIC/LOO. `scatter_param`: `"auto"` (default)
+uses the lone posterior column that is not a model parameter (e.g. `sigma`); a name forces it; `None`
+disables (reported errors only — the honest default for distance-based ABC, which fits no σ). Marginalising
+the predictive over the full posterior including nuisance scatter is the standard prescription (Gelman
+et al., *BDA3*, ch. 6–7; Vehtari, Gelman & Gabry 2017; Watanabe 2010).
 
 Every sampler attaches this to **`result.info["predictive_metrics"]`** (with `n_draws=200`) so it lands
 in `to_json()`. Note that broad tolerance/under-converged posteriors (ABC, un-converged SNPE) inflate
@@ -478,7 +491,7 @@ Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`
 `io.units.to_canonical`, `io.svo._svo_fetch_metadata/_svo_fetch_index/_svo_fetch_transmission`
 (network boundary), `dev/{phase0_smoke,demo_abc_at2017gfo,demo_ingestion}.py`.
 
-## 8. Test coverage (217 tests, all passing)
+## 8. Test coverage (218 tests, all passing)
 
 | File | Tests | Focus |
 |---|---|---|
@@ -487,7 +500,7 @@ Exposed as `wp.recovery_metrics`, `wp.posterior_predictive_check`, `wp.sbc_rank`
 | `test_schema.py` | 11 | Validation, subsetting, `add_*`, `snr`/`select_snr`, `set_explosion_date`, upper limits. |
 | `test_loader.py` | 12 | AT2017GFO load, window/subset, grouping, `min_snr`, `explosion_date`, upper limits. |
 | `test_plotting.py` | 11 | report/grid layouts, flux/absolute-mag, redshift guard, upper-limit markers; `plot_corner` overlay/legend, common-params + log axes + array/empty errors; `plot_ppc` single/multi × flux/magnitude × panel-by band/method; `plot_calibration` multi + per-band. |
-| `test_metrics.py` | 9 | WAIC keys + finite + better-fit-lower ordering, `fixed=`/subsampling, pointwise log-lik summing to the total; `per_band_metrics` zero-at-truth / offset / JSON; `predictive_metrics` RMSE/LPD/ELPD-LOO/WAIC/AIC-BIC/coverage block + auto-attach, and coverage-calibration for a good fit. |
+| `test_metrics.py` | 10 | WAIC keys + finite + better-fit-lower ordering, `fixed=`/subsampling, pointwise log-lik summing to the total; `per_band_metrics` zero-at-truth / offset / JSON; `predictive_metrics` RMSE/LPD/ELPD-LOO/WAIC/AIC-BIC/coverage block + auto-attach, coverage-calibration for a good fit, and scatter-aware WAIC/coverage vs mis-specified. |
 | `test_validation.py` | 4 | recovery z-score + coverage signs, PPC (reduced χ²≈1, predictive coverage, p≈0.5), SBC rank uniformity (calibrated vs edge-biased), `sbc_rank` bounds. |
 | `test_embeddings.py` | 6 | MLP/TCN embedding shapes + finite output, TCN receptive field covers the input, `build_embedding` dispatch + unknown-name error, `x_format` validation, ABC `simulate_noise` (n_jobs-reproducible, optional, noisy-vs-noiseless distance floor). |
 | `test_scatter.py` | 4 | Villar+17 scatter likelihood (formula vs hand calc, σ=0 reduces to Gaussian, pointwise sums, registry), MCMC recovers injected extra scatter (σ counted in AIC), ABC scatter validation + posterior column, ABC magnitude-space acceptance. |

@@ -171,9 +171,10 @@ def per_band_metrics(lc, model, params, *, space="auto", fixed=None):
 DEFAULT_COVERAGE_LEVELS = (0.5, 0.68, 0.8, 0.9, 0.95, 0.99)
 
 
-def predictive_metrics(result, lc, model=None, *, space="auto", likelihood="auto", fixed=None,
-                       levels=DEFAULT_COVERAGE_LEVELS, n_draws=400, seed=0):
-    """Posterior predictive / model-comparison metrics from a fit, for the JSON report.
+def predictive_metrics(result, lc, model=None, *, space="auto", likelihood="auto",
+                       scatter_param="auto", fixed=None, levels=DEFAULT_COVERAGE_LEVELS,
+                       n_draws=400, seed=0):
+    r"""Posterior predictive / model-comparison metrics from a fit, for the JSON report.
 
     Evaluates the model across ``n_draws`` posterior samples once and returns, in one dict:
 
@@ -189,43 +190,92 @@ def predictive_metrics(result, lc, model=None, *, space="auto", likelihood="auto
     * **aic** / **bic** — from the fit's best-fit likelihood (lower is better), carried through from
       ``result`` when available.
     * **coverage** — the calibration curve: for each nominal ``level`` the *empirical* fraction of
-      observations inside the central posterior-predictive interval (model + observation noise), overall
-      and per band. A calibrated fit has empirical ≈ nominal at every level.
+      observations inside the central posterior-predictive interval, overall and per band. A calibrated
+      fit has empirical ≈ nominal at every level.
+
+    **Scatter-aware predictive density.** The log-predictive quantities (LPD, WAIC, PSIS-LOO) and the
+    coverage intervals must be evaluated under the *same* generative model the fit optimised — otherwise
+    they score the data against a distribution the parameters were never tuned for. When the fit includes
+    a **free extra-scatter term** :math:`\sigma` (Villar et al. 2017; a "jitter"/intrinsic-scatter
+    parameter in the sense of Hogg, Bovy & Lang 2010), the pointwise density is the scatter-augmented
+    Gaussian
+
+    .. math::  p(y_i\mid\theta_s,\sigma_s) = \mathcal N\!\big(M_i(\theta_s),\; \sigma_i^2 + \sigma_s^2\big),
+
+    with **each draw's own** :math:`\sigma_s`, and the posterior-predictive replications draw noise from
+    the same inflated variance. Using only the reported errors :math:`\sigma_i` (i.e. dropping
+    :math:`\sigma`) makes the density mis-specified: for high-SNR photometry it collapses, so the WAIC/LOO
+    effective-parameter counts (``p_waic``/``p_loo``) explode and coverage collapses. Marginalising over
+    the full posterior — nuisance scatter included — is the standard posterior-predictive prescription
+    (Gelman et al., *Bayesian Data Analysis* 3rd ed., ch. 6–7; Vehtari, Gelman & Gabry 2017).
+
+    ``scatter_param`` selects that column: ``"auto"`` (default) uses the **single posterior column that
+    is not a model parameter** (e.g. ``sigma`` for a Villar fit) as :math:`\sigma`; a name forces it; and
+    ``None`` disables scatter (reported errors only). Distance-based ABC fits carry no ``sigma`` column,
+    so ``"auto"`` correctly falls back to the plain Gaussian for them.
 
     ``result`` is a :class:`SamplerResult` (uses ``.samples`` / ``.model`` / ``.aic`` / ``.bic``); a bare
     posterior (DataFrame/array) also works but then ``aic`` / ``bic`` are omitted. LOO/WAIC use ``arviz``
     when installed and fall back to a plug-in WAIC otherwise.
+
+    References
+    ----------
+    * Villar et al. 2017, ApJL 851, L21 — the free extra-scatter term (Eq. 4, MOSFiT form).
+    * Hogg, Bovy & Lang 2010, arXiv:1008.4686 — intrinsic scatter ("jitter") added in quadrature.
+    * Gelman et al. 2013, *Bayesian Data Analysis* (3rd ed.), ch. 6–7 — posterior predictive checks.
+    * Vehtari, Gelman & Gabry 2017, *Stat. Comput.* 27, 1413 — WAIC & PSIS-LOO from the pointwise
+      predictive density; Watanabe 2010, *JMLR* 11, 3571 — WAIC.
     """
+    from .likelihood import GaussianLikelihoodWithScatter
+
     samples, names, model_name = _resolve_samples(result, model)
     m = get_model(model if model is not None else model_name)
     if m is None:
         raise ValueError("No model given and the posterior has no .model; pass model=...")
     names = list(m.parameters) if names is None else names
 
+    # Resolve the extra-scatter column. "auto" = the lone posterior column that is not a model
+    # parameter (the fitted nuisance scatter sigma); explicit name forces it; None disables.
+    extra_cols = [c for c in names if c not in set(m.parameters) and c not in (fixed or {})]
+    if scatter_param == "auto":
+        sp = extra_cols[0] if len(extra_cols) == 1 else None
+    elif scatter_param and scatter_param in names:
+        sp = scatter_param
+    else:
+        sp = None
+    sp_idx = names.index(sp) if sp is not None else None
+
     n_total = samples.shape[0]
     if n_total > n_draws:
         samples = samples[np.random.default_rng(seed).choice(n_total, size=n_draws, replace=False)]
-    lik = make_likelihood(lc, kind=likelihood, space=space)
+    if sp is not None:
+        lik = GaussianLikelihoodWithScatter(lc, space=space, scatter_param=sp)
+    else:
+        lik = make_likelihood(lc, kind=likelihood, space=space)
     if not hasattr(lik, "log_likelihood_pointwise"):
         raise TypeError(f"{type(lik).__name__} has no log_likelihood_pointwise(); predictive_metrics "
                         "needs a Gaussian (with/without upper limits) likelihood.")
     times, bands = np.asarray(lc.time, float), np.asarray(lc.band).astype(str)
     y = np.asarray(lik.y, float)
-    sigma = np.asarray(lik.sigma, float)
+    sigma = np.where(np.isfinite(lik.sigma) & (lik.sigma > 0), lik.sigma, 0.0)
     extra = dict(fixed or {})
 
-    preds, lls = [], []
+    preds, lls, sig_tot = [], [], []
     for row in samples:
+        s = float(row[sp_idx]) if sp_idx is not None else 0.0
         mf = m.predict({**extra, **{nm: float(v) for nm, v in zip(names, row)}}, times, bands)
         preds.append(np.asarray(lik.model_in_space(mf), float))
-        lls.append(np.asarray(lik.log_likelihood_pointwise(mf), float))
+        lls.append(np.asarray(lik.log_likelihood_pointwise(mf, sigma_extra=s)
+                              if sp_idx is not None else lik.log_likelihood_pointwise(mf), float))
+        sig_tot.append(np.sqrt(sigma ** 2 + s ** 2))            # per-draw predictive sd (errors ⊕ σ)
     P = np.vstack(preds)                                        # (draws, data) in comparison space
     ll = np.vstack(lls)
+    S = np.vstack(sig_tot)
     good = np.all(np.isfinite(ll), axis=1)
-    ll, P_ok = ll[good], P[good]
+    ll, P_ok, S_ok = ll[good], P[good], S[good]
     n_used = ll.shape[0]
 
-    # RMSE vs the posterior-MEAN prediction (per band + overall).
+    # RMSE vs the posterior-MEAN prediction (per band + overall) — unaffected by the noise model.
     mean_pred = P_ok.mean(axis=0)
     resid = y - mean_pred
 
@@ -242,9 +292,10 @@ def predictive_metrics(result, lc, model=None, *, space="auto", likelihood="auto
     # ELPD (PSIS-LOO) and WAIC via arviz when available; plug-in WAIC otherwise.
     loo_out, waic_out = _loo_waic(ll)
 
-    # Coverage-calibration curve: posterior-predictive intervals WITH observation noise.
+    # Coverage-calibration curve: posterior-predictive intervals with the fit's own noise model
+    # (reported errors ⊕ per-draw scatter σ).
     rng = np.random.default_rng(seed + 1)
-    y_rep = P_ok + rng.normal(0.0, np.where(np.isfinite(sigma) & (sigma > 0), sigma, 0.0), size=P_ok.shape)
+    y_rep = P_ok + rng.normal(0.0, 1.0, size=P_ok.shape) * S_ok
     cov_overall, cov_bands = [], {str(b): [] for b in np.unique(bands)}
     for q in levels:
         lo, hi = np.percentile(y_rep, [50 * (1 - q), 50 * (1 + q)], axis=0)
@@ -256,8 +307,8 @@ def predictive_metrics(result, lc, model=None, *, space="auto", likelihood="auto
     coverage = {"levels": [float(q) for q in levels], "overall": cov_overall, "bands": cov_bands}
 
     out = {"space": lik.space, "unit": "mag" if lik.space == "magnitude" else "Jy",
-           "n_draws": int(n_used), "rmse": rmse, "lpd": lpd, "elpd_loo": loo_out, "waic": waic_out,
-           "coverage": coverage}
+           "n_draws": int(n_used), "scatter_param": sp, "rmse": rmse, "lpd": lpd,
+           "elpd_loo": loo_out, "waic": waic_out, "coverage": coverage}
     for key in ("aic", "bic"):
         v = getattr(result, key, None)
         if v is not None and np.isfinite(v):

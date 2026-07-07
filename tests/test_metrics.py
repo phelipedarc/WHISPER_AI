@@ -159,3 +159,31 @@ def test_predictive_metrics_coverage_calibrated_for_good_fit():
     pm = wp.predictive_metrics(res, lc, space="flux", n_draws=400)
     for c in pm["coverage"]["overall"]:                    # empirical within 0.15 of nominal
         assert abs(c["empirical"] - c["nominal"]) < 0.15
+
+
+def test_predictive_metrics_scatter_aware():
+    """With a fitted extra-scatter sigma, the scatter-augmented predictive gives sane WAIC/p_waic and
+    near-nominal coverage; dropping sigma mis-specifies it (p_waic explodes, coverage collapses)."""
+    m = get_model("gaussian_rise")
+    t = np.linspace(0.1, 30, 80)
+    clean = m.predict(TRUE, t, None)
+    rng = np.random.default_rng(0)
+    err = np.full_like(clean, 0.02)                       # tiny reported errors
+    obs = clean + rng.normal(0, np.sqrt(err ** 2 + 0.3 ** 2))   # true intrinsic scatter 0.3
+    lc = wp.LightCurve(time=t, band=["r"] * 80, flux=obs, flux_err=err, name="syn")
+    prior = wp.Prior({**{k: wp.Uniform(0.5 * v, 1.5 * v) for k, v in TRUE.items()},
+                      "sigma": wp.LogUniform(1e-3, 3.0)})
+    res = wp.fit_MCMC(lc, "gaussian_rise", prior=prior, nsteps=2500, burnin=800,
+                      likelihood="gaussian_scatter", seed=0)
+
+    sa = wp.predictive_metrics(res, lc, space="flux", n_draws=400)          # auto -> scatter-aware
+    assert sa["scatter_param"] == "sigma"
+    assert sa["waic"]["p_waic"] < 50                      # sane effective #params (truth ~5)
+    assert sa["elpd_loo"] is not None and sa["elpd_loo"]["pareto_k_max"] < 0.7
+    cov95 = next(c["empirical"] for c in sa["coverage"]["overall"] if c["nominal"] == 0.95)
+    assert cov95 > 0.85                                   # near-nominal (calibrated)
+
+    no = wp.predictive_metrics(res, lc, space="flux", n_draws=400, scatter_param=None)
+    assert no["waic"]["p_waic"] > sa["waic"]["p_waic"] * 100   # mis-specified -> explodes
+    cov95_no = next(c["empirical"] for c in no["coverage"]["overall"] if c["nominal"] == 0.95)
+    assert cov95_no < cov95                                # under-covers without sigma

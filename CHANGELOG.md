@@ -5,6 +5,20 @@ released to PyPI yet — install from GitHub (`pip install git+https://github.co
 
 ## [Unreleased] — 0.0.1.dev0
 
+### Scatter-aware predictive metrics (WAIC / PSIS-LOO / coverage)
+- **`predictive_metrics` now folds the fitted extra-scatter σ into the predictive density.** For a fit
+  with a free Villar+2017 scatter term (a "jitter"/intrinsic-scatter parameter, Hogg, Bovy & Lang 2010),
+  the pointwise density used for LPD / WAIC / PSIS-LOO and the coverage intervals is the scatter-augmented
+  Gaussian `𝒩(M_i, σ_i² + σ_s²)` with **each posterior draw's own** σ_s — the same generative model the
+  fit optimised. Previously these used the reported errors only, which for high-SNR photometry collapsed
+  the density: `p_waic`/`p_loo` exploded (10⁴–10⁶) and coverage under-shot badly. Folding σ back in
+  restores sane effective-parameter counts and near-nominal coverage (verified on synthetic data:
+  p_waic 152072 → 4.1, 95%-coverage 0.33 → 0.99). New `scatter_param` argument: `"auto"` (default; uses
+  the lone non-model posterior column, e.g. `sigma`), an explicit name, or `None` to disable. This is the
+  standard posterior-predictive prescription — marginalise over the full posterior, nuisance scatter
+  included (Gelman et al., *Bayesian Data Analysis* 3rd ed. ch. 6–7; Vehtari, Gelman & Gabry 2017;
+  Watanabe 2010). Distance-based ABC (no σ) correctly falls back to the plain Gaussian.
+
 ### Fix: plots no longer crash after importing redback (LaTeX rendering)
 - **redback** enables matplotlib's `text.usetex` globally on import, which made every subsequent
   WHISPER plot crash with `RuntimeError: ... latex could not be found` on systems without a TeX
