@@ -269,8 +269,10 @@ def fit(method):
         "amortized_s": (float(amortized) if amortized is not None else None),
         "n_samples": int(res.n_samples), "aic": float(res.aic), "bic": float(res.bic),
         "max_log_likelihood": float(res.max_log_likelihood),
-        "info": {k: v for k, v in res.info.items()
-                 if isinstance(v, (int, float, str, bool, type(None)))},
+        "info": {**{k: v for k, v in res.info.items()
+                    if isinstance(v, (int, float, str, bool, type(None)))},
+                 # keep the nested metric blocks (per-band + posterior-predictive) — they serialise
+                 **{k: res.info[k] for k in ("band_metrics", "predictive_metrics") if k in res.info}},
     }, open(os.path.join(OUT, f"villar_{method}.json"), "w"), indent=2, default=float)
     s = res.summary
     sig = (" sigma=%.3f" % s["sigma"]["median"]) if "sigma" in s else ""
@@ -283,8 +285,9 @@ if __name__ == "__main__":
     if len(a) == 2 and a[0] == "fit":
         fit(a[1])
     elif a and a[0] == "plot":
+        _register()                              # model must be registered to (re)compute metrics
         sys.path.insert(0, SELF)                 # sibling module, regardless of CWD
         from villar_plots import plot
-        plot(OUT, SAMPLERS, PARAMS, LABELS, BANDS)
+        plot(OUT, SAMPLERS, PARAMS, LABELS, BANDS, model=MODEL, space=SPACE)
     else:
         raise SystemExit(__doc__)

@@ -98,6 +98,344 @@
     "scatter_param": null,
     "n_jobs": 48,
     "distance": "chi2_distance",
-    "likelihood_space": "magnitude"
+    "likelihood_space": "magnitude",
+    "predictive_metrics": {
+      "space": "magnitude",
+      "unit": "mag",
+      "n_draws": 200,
+      "scatter_param": null,
+      "rmse": {
+        "overall": 0.47299265954368563,
+        "bands": {
+          "B": 0.43279355675026254,
+          "H": 0.3891229502441945,
+          "J": 0.4030609195408003,
+          "Ks": 0.586456747119027,
+          "V": 0.455009339318763,
+          "Y": 0.5737996844469921,
+          "g": 0.44879506225114724,
+          "i": 0.45986227871154056,
+          "r": 0.403715868415842,
+          "z": 0.5144745316222323
+        }
+      },
+      "lpd": {
+        "total": -11740.58049847008,
+        "per_point": -34.5311191131473
+      },
+      "elpd_loo": {
+        "elpd_loo": -113201.8912351272,
+        "p_loo": 101461.31073665712,
+        "se": 13662.142229274192,
+        "looic": 226403.7824702544,
+        "pareto_k_max": Infinity
+      },
+      "waic": {
+        "waic": 14758308.39605268,
+        "elpd_waic": -7379154.19802634,
+        "p_waic": 7367413.61752787,
+        "se": 3436991.592864258
+      },
+      "coverage": {
+        "levels": [
+          0.5,
+          0.68,
+          0.8,
+          0.9,
+          0.95,
+          0.99
+        ],
+        "overall": [
+          {
+            "nominal": 0.5,
+            "empirical": 0.23823529411764705
+          },
+          {
+            "nominal": 0.68,
+            "empirical": 0.3764705882352941
+          },
+          {
+            "nominal": 0.8,
+            "empirical": 0.48823529411764705
+          },
+          {
+            "nominal": 0.9,
+            "empirical": 0.6205882352941177
+          },
+          {
+            "nominal": 0.95,
+            "empirical": 0.7088235294117647
+          },
+          {
+            "nominal": 0.99,
+            "empirical": 0.8176470588235294
+          }
+        ],
+        "bands": {
+          "B": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.1
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 0.3
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 0.5
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 0.5
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 0.8
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 0.9
+            }
+          ],
+          "H": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.36363636363636365
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 0.6060606060606061
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 0.6666666666666666
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 0.7878787878787878
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 0.8484848484848485
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 0.9393939393939394
+            }
+          ],
+          "J": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.23529411764705882
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 0.38235294117647056
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 0.5
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 0.6764705882352942
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 0.7352941176470589
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 0.7941176470588235
+            }
+          ],
+          "Ks": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.23529411764705882
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 0.35294117647058826
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 0.47058823529411764
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 0.5882352941176471
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 0.7058823529411765
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 0.8235294117647058
+            }
+          ],
+          "V": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.16
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 0.4
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 0.52
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 0.68
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 0.8
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 0.84
+            }
+          ],
+          "Y": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.15
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 0.25
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 0.3
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 0.45
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 0.55
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 0.7
+            }
+          ],
+          "g": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.42857142857142855
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 0.5357142857142857
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 0.6785714285714286
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 0.7857142857142857
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 0.8214285714285714
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 0.8214285714285714
+            }
+          ],
+          "i": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.18518518518518517
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 0.25925925925925924
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 0.3333333333333333
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 0.4444444444444444
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 0.5
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 0.7592592592592593
+            }
+          ],
+          "r": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.19607843137254902
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 0.35294117647058826
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 0.5098039215686274
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 0.6666666666666666
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 0.8235294117647058
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 0.8627450980392157
+            }
+          ],
+          "z": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.2647058823529412
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 0.35294117647058826
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 0.47058823529411764
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 0.6176470588235294
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 0.6176470588235294
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 0.7647058823529411
+            }
+          ]
+        }
+      },
+      "aic": 55747.25396930821,
+      "bic": 55774.05658863148
+    }
   }
 }

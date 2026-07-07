@@ -34,6 +34,21 @@ $$\ln\mathcal{L} = -\tfrac{1}{2}\sum_i\left[\frac{(O_i-M_i)^2}{\sigma_i^2+\sigma
 
 *χ²/dof against the reported errors is ≫1 for every method — high-SNR kilonova photometry always carries model systematics beyond the measurement errors; that is exactly what σ absorbs: with the fitted scatter the χ²/dof (σᵢ ⊕ σ) is ≈1 and the predictive coverage is nominal. AIC values are comparable only among methods fitting the same parameter set (the ABC family omits σ).*
 
+## Posterior-predictive metrics
+
+Computed from the posterior samples via `whisper_labia.predictive_metrics` — **scatter-aware**: the log-predictive density (LPD), WAIC, PSIS-LOO and coverage use the fit's own noise model, `𝒩(Mᵢ, σᵢ² + σ²)` with each draw's fitted scatter σ (Villar+17; Vehtari, Gelman & Gabry 2017). Distance-based ABC fits no σ, so it falls back to the reported errors (flagged below).
+
+| method | RMSE [mag] ↓ | LPD ↑ | ELPD-LOO ↑ (p_loo, k) | WAIC ↓ | cov68 | cov95 | σ-aware |
+|---|---|---|---|---|---|---|---|
+| MCMC | 0.329 | -104 | -109 (5, 0.46) | 218 | 0.72 | 0.92 | σ |
+| ABC | 0.449 | -8897 | -128043 (119146, inf) | 17185077 | 0.43 | 0.81 | no |
+| ABC-SMC | 0.473 | -11741 | -113202 (101461, inf) | 14758308 | 0.38 | 0.71 | no |
+| NPE-MDN (GPU) | 0.545 | -456 | -852 (396, 5.96) | 2245 | 1.00 | 1.00 | σ |
+| NPE-NSF (GPU) | 0.583 | -242 | -8551 (8309, inf) | 159586 | 0.89 | 1.00 | σ |
+| SNPE-5r NSF (GPU, no embed) | 0.412 | -223 | -41947 (41725, inf) | 2569807 | 0.95 | 1.00 | σ |
+
+*RMSE is against the posterior-mean prediction. LPD/WAIC/ELPD-LOO are on the log-predictive scale (LPD & ELPD higher = better; WAIC lower = better). PSIS-LOO's Pareto-k > 0.7 (or ∞) flags an unreliable LOO estimate — common for the heavier-tailed neural/ABC importance weights, where WAIC and coverage are the better guides. Coverage ≈ nominal ⇒ calibrated; see the calibration figure. The ABC family (no σ) shows the collapse that a scatter-agnostic predictive produces — an honest signature that its distance posterior is not a calibrated predictive here.*
+
 ## Interpretation
 
 - **The scatter term works.** MCMC recovers an extra scatter **σ ≈ 0.32 mag**, in the ballpark of **Villar+2017's σ = 0.256 mag** (the neural σ posteriors run broader — a single light curve weakly constrains a noise level). Folding it in quadrature turns the χ²/dof (vs reported errors) into ≈1 with nominal 95% predictive coverage — the excess is model systematics (a semi-analytic two-component kilonova can't capture every spectral feature), exactly what Villar+17 introduced σ to absorb.

@@ -63,10 +63,52 @@ def _fmt(v, lo, hi):
     return f"{v:.{dec}f}^{{+{hi - v:.{dec}f}}}_{{-{v - lo:.{dec}f}}}"
 
 
-def plot(out, samplers, params, labels, bands):
+def _reconstruct_lc(npz, space):
+    """Rebuild the fitted LightCurve from a saved ``.npz`` (time/band/mag/mag_err)."""
+    import whisper_labia as wp
+    lc = wp.LightCurve(time=np.asarray(npz["time"], float),
+                       band=np.asarray(npz["band"]).astype(str),
+                       magnitude=np.asarray(npz["mag"], float),
+                       magnitude_err=np.asarray(npz["mag_err"], float), name="AT2017gfo")
+    return lc.add_flux() if space == "flux" else lc
+
+
+def _ensure_predictive_metrics(out, res, npz, model, space):
+    """Compute + cache the posterior-predictive metric block for each method (once).
+
+    New fits attach ``info['predictive_metrics']`` automatically; older result JSONs predate it, so we
+    compute it here from the saved posterior samples (scatter-aware — the fitted σ is auto-detected) and
+    write it back into the JSON so subsequent renders are instant. Best-effort: needs redback + the model
+    registered; a failure just leaves that method without the extra table row.
+    """
+    from types import SimpleNamespace
+    import whisper_labia as wp
+    for m, d in res.items():
+        if model is None or m not in npz or (d.get("info", {}) or {}).get("predictive_metrics"):
+            continue
+        try:
+            import pandas as pd
+            z = npz[m]
+            df = pd.DataFrame(z["samples"], columns=list(z["params"]))
+            lc = _reconstruct_lc(z, space)
+            fake = SimpleNamespace(samples=df, model=model, aic=d.get("aic"), bic=d.get("bic"))
+            pm = wp.predictive_metrics(fake, lc, space=space, n_draws=200, seed=0)
+            d.setdefault("info", {})["predictive_metrics"] = pm
+            path = os.path.join(out, f"villar_{m}.json")           # cache back into the JSON
+            if os.path.exists(path):
+                json.dump(d, open(path, "w"), indent=2, default=float)
+        except Exception as exc:                                    # pragma: no cover
+            print(f"  [predictive_metrics skipped for {m}: {exc}]")
+
+
+def plot(out, samplers, params, labels, bands, model=None, space="magnitude"):
     res, npz = _load(out)
     if not res:
         raise SystemExit("no villar results found; run `at2017gfo_villar.py fit ...` first")
+    _ensure_predictive_metrics(out, res, npz, model, space)
+    # redback (imported while computing the metrics above) flips matplotlib's text.usetex on; there is
+    # no LaTeX in the container, so reset it before any of this script's direct-matplotlib figures.
+    matplotlib.rcParams["text.usetex"] = False
     ms = [m for m in samplers if m in res]
     allp = params + ["sigma"]
 
@@ -382,6 +424,39 @@ def _report(out, res, samplers, params, labels, ms, peak_info=None):
               "exactly what σ absorbs: with the fitted scatter the χ²/dof (σᵢ ⊕ σ) is ≈1 and the "
               "predictive coverage is nominal. AIC values are comparable only among methods fitting "
               "the same parameter set (the ABC family omits σ).*", ""]
+
+    # ---------------- posterior-predictive metrics (scatter-aware) --------------------------------
+    if any((res[m].get("info", {}) or {}).get("predictive_metrics") for m in ms):
+        unit = next((res[m]["info"]["predictive_metrics"]["unit"] for m in ms
+                     if (res[m].get("info", {}) or {}).get("predictive_metrics")), "mag")
+        lines += [
+            "## Posterior-predictive metrics", "",
+            "Computed from the posterior samples via `whisper_labia.predictive_metrics` — **scatter-aware**: "
+            "the log-predictive density (LPD), WAIC, PSIS-LOO and coverage use the fit's own noise model, "
+            "`𝒩(Mᵢ, σᵢ² + σ²)` with each draw's fitted scatter σ (Villar+17; Vehtari, Gelman & Gabry 2017). "
+            "Distance-based ABC fits no σ, so it falls back to the reported errors (flagged below).", "",
+            f"| method | RMSE [{unit}] ↓ | LPD ↑ | ELPD-LOO ↑ (p_loo, k) | WAIC ↓ | cov68 | cov95 | σ-aware |",
+            "|---|---|---|---|---|---|---|---|"]
+        for m in ms:
+            pm = (res[m].get("info", {}) or {}).get("predictive_metrics")
+            if not pm:
+                lines.append(f"| {samplers[m][0]} | — | — | — | — | — | — | — |")
+                continue
+            loo = pm.get("elpd_loo") or {}
+            cov = {c["nominal"]: c["empirical"] for c in pm["coverage"]["overall"]}
+            loo_s = ("—" if not loo else
+                     f"{loo['elpd_loo']:.0f} ({loo['p_loo']:.0f}, {loo['pareto_k_max']:.2f})")
+            lines.append(
+                f"| {samplers[m][0]} | {pm['rmse']['overall']:.3f} | {pm['lpd']['total']:.0f} | "
+                f"{loo_s} | {pm['waic']['waic']:.0f} | {cov.get(0.68, float('nan')):.2f} | "
+                f"{cov.get(0.95, float('nan')):.2f} | {'σ' if pm.get('scatter_param') else 'no'} |")
+        lines += ["", "*RMSE is against the posterior-mean prediction. LPD/WAIC/ELPD-LOO are on the "
+                  "log-predictive scale (LPD & ELPD higher = better; WAIC lower = better). PSIS-LOO's "
+                  "Pareto-k > 0.7 (or ∞) flags an unreliable LOO estimate — common for the heavier-tailed "
+                  "neural/ABC importance weights, where WAIC and coverage are the better guides. Coverage "
+                  "≈ nominal ⇒ calibrated; see the calibration figure. The ABC family (no σ) shows the "
+                  "collapse that a scatter-agnostic predictive produces — an honest signature that its "
+                  "distance posterior is not a calibrated predictive here.*", ""]
 
     # Data-driven interpretation. Rail detection: the posterior piles against a bound — judged by
     # proximity to the bound VALUE (not fraction of the prior range, which is misleading for wide

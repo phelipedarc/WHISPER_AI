@@ -112,6 +112,344 @@
     "num_samples": 10000,
     "device": "cuda",
     "seed": 0,
-    "num_workers": 24
+    "num_workers": 24,
+    "predictive_metrics": {
+      "space": "magnitude",
+      "unit": "mag",
+      "n_draws": 200,
+      "scatter_param": "sigma",
+      "rmse": {
+        "overall": 0.5447290020786268,
+        "bands": {
+          "B": 0.579613021540108,
+          "H": 0.34458499738453063,
+          "J": 0.4045151030341186,
+          "Ks": 0.47857003048368135,
+          "V": 0.48423707400831284,
+          "Y": 0.739094200303908,
+          "g": 0.7183696761802806,
+          "i": 0.5070405950400901,
+          "r": 0.6159255258720501,
+          "z": 0.591579979984902
+        }
+      },
+      "lpd": {
+        "total": -456.167434788424,
+        "per_point": -1.3416689258483059
+      },
+      "elpd_loo": {
+        "elpd_loo": -851.8079037683094,
+        "p_loo": 395.64046897988544,
+        "se": 58.815550529366455,
+        "looic": 1703.6158075366188,
+        "pareto_k_max": 5.9588038423377965
+      },
+      "waic": {
+        "waic": 2245.108073626846,
+        "elpd_waic": -1122.554036813423,
+        "p_waic": 666.3866020249991,
+        "se": 252.08483748086465
+      },
+      "coverage": {
+        "levels": [
+          0.5,
+          0.68,
+          0.8,
+          0.9,
+          0.95,
+          0.99
+        ],
+        "overall": [
+          {
+            "nominal": 0.5,
+            "empirical": 0.9382352941176471
+          },
+          {
+            "nominal": 0.68,
+            "empirical": 0.9970588235294118
+          },
+          {
+            "nominal": 0.8,
+            "empirical": 1.0
+          },
+          {
+            "nominal": 0.9,
+            "empirical": 1.0
+          },
+          {
+            "nominal": 0.95,
+            "empirical": 1.0
+          },
+          {
+            "nominal": 0.99,
+            "empirical": 1.0
+          }
+        ],
+        "bands": {
+          "B": [
+            {
+              "nominal": 0.5,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 1.0
+            }
+          ],
+          "H": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.9696969696969697
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 1.0
+            }
+          ],
+          "J": [
+            {
+              "nominal": 0.5,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 1.0
+            }
+          ],
+          "Ks": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.9607843137254902
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 1.0
+            }
+          ],
+          "V": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.92
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 1.0
+            }
+          ],
+          "Y": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.75
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 1.0
+            }
+          ],
+          "g": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.8571428571428571
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 1.0
+            }
+          ],
+          "i": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.9814814814814815
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 1.0
+            }
+          ],
+          "r": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.9019607843137255
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 1.0
+            }
+          ],
+          "z": [
+            {
+              "nominal": 0.5,
+              "empirical": 0.9705882352941176
+            },
+            {
+              "nominal": 0.68,
+              "empirical": 0.9705882352941176
+            },
+            {
+              "nominal": 0.8,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.9,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.95,
+              "empirical": 1.0
+            },
+            {
+              "nominal": 0.99,
+              "empirical": 1.0
+            }
+          ]
+        }
+      },
+      "aic": 481.59170942185847,
+      "bic": 512.2232743627401
+    }
   }
 }
